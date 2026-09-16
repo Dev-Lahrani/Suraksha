@@ -1,0 +1,63 @@
+{
+  "version": "2026.09",
+  "sources": "Structure adapted from NDMA heat/flood guidelines and WHO air-quality advice.",
+  "bands": ["low", "moderate", "high"],
+  "hazards": {
+    "heat": {
+      "low": {
+        "en": ["Stay hydrated; carry water when outdoors.", "Check the 5-day outlook before planning field work."],
+        "hi": ["पानी पीते रहें; बाहर जाते समय पानी साथ रखें।", "खेती या बाहरी काम से पहले 5-दिन का पूर्वानुमान देखें।"],
+        "mr": ["पाणी प्या; बाहेर जाताना पाणी सोबत ठेवा.", "शेती किंवा बाहेरचे काम करण्यापूर्वी ५-दिवसांचा अंदाज पहा."]
+      },
+      "moderate": {
+        "en": ["Avoid outdoor work between 12:00 and 15:00.", "Drink water every 20-30 minutes if outside; use ORS after sweating.", "Check on elderly neighbours and children daily."],
+        "hi": ["दोपहर 12 से 3 बजे के बीच बाहरी काम से बचें।", "बाहर रहने पर हर 20-30 मिनट में पानी पिएं; पसीने के बाद ORS लें।", "बुजुर्ग पड़ोसियों और बच्चों की रोज़ जांच करें।"],
+        "mr": ["दुपारी १२ ते ३ या वेळेत बाहेरचे काम टाळा.", "बाहेर असताना दर २०-३० मिनिटांनी पाणी प्या; घाम आल्यास ORS घ्या.", "वयस्क शेजारी आणि मुलांची रोज जपून घ्या."]
+      },
+      "high": {
+        "en": ["EMERGENCY: Do not go outdoors between 11:00 and 16:00 unless essential.", "Heat stroke is life-threatening: move victims to shade, cool with water, call 108.", "Cancel non-essential travel; cattle need shade and extra water."],
+        "hi": ["आपातकाल: सुबह 11 से शाम 4 बजे तक ज़रूरी न हो तो घर से बाहर न निकलें।", "लू (हीट स्ट्रोक) जानलेवा है: पीड़ित को छाया में ले जाएं, पानी से ठंडा करें, 108 पर कॉल करें।", "ज़रूरी यात्रा रद्द करें; मवेशियों को छाया और अतिरिक्त पानी दें।"],
+        "mr": ["आपत्कालीन: सकाळी ११ ते संध्याकाळी ४ या वेळेत गरज नसताना घराबाहेर पडू नका.", "उष्माघात जीवघेणा आहे: बाधिताला छायेत न्या, पाण्याने थंड करा, १०८ ला कॉल करा.", "आवश्यक नसलेला प्रवास रद्द करा; जनावरांना सावली व जास्त पाणी द्या."]
+      }
+    },
+    "flood": {
+      "low": {
+        "en": ["Keep drains around your home clear before the rains.", "Store emergency documents in plastic bags."],
+        "hi": ["बारिश से पहले घर के आसपास के नाले साफ करें।", "ज़रूरी कागज़ात प्लास्टिक थैली में सुरक्षित रखें।"],
+        "mr": ["पावसापूर्वी घराभोवतीचे नाले स्वच्छ ठेवा.", "महत्त्वाची कागदपत्रे प्लास्टिक पिशवीत सुरक्षित ठेवा."]
+      },
+      "moderate": {
+        "en": ["Avoid walking or driving through flowing water above ankle depth.", "Shift grains, medicines and electric appliances to higher shelves.", "Keep a torch, radio and 3 days of drinking water ready."],
+        "hi": ["टखने से ऊपर बहते पानी में पैदल या वाहन से न जाएं।", "अनाज, दवाइयां और बिजली के उपकरण ऊंची जगह पर रखें।", "टॉर्च, रेडियो और 3 दिन का पीने का पानी तैयार रखें।"],
+        "mr": ["घोट्यापेक्षा उंच वाहते पाण्यात पाय वाहून जाऊ नका व वाहन चालवू नका.", "धान्य, औषधे आणि विजेची साधने उंच ठिकाणी ठेवा.", "टॉर्च, रेडिओ आणि ३ दिवसांचे पिण्याचे पाणी तयार ठेवा."]
+      },
+      "high": {
+        "en": ["EMERGENCY: Move to the nearest shelter or upper floor immediately.", "Do NOT touch electric poles, wires or fallen lines near water.", "Call 1078 (NDMA helpline) or 112; keep family together and follow evacuation routes."],
+        "hi": ["आपातकाल: तुरंत नज़दीकी आश्रय या ऊपरी मंज़िल पर जाएं।", "पानी के पास बिजली के खंभे, तार या गिरी लाइनों को हाथ न लगाएं।", "1078 (NDMA हेल्पलाइन) या 112 पर कॉल करें; परिवार को साथ रखें और निकासी मार्गों का पालन करें।"],
+        "mr": ["आपत्कालीन: लगेच जवळच्या आश्रयस्थानात किंवा वरच्या मजल्यावर जा.", "पाण्याजवळ वीजेचे खांब, तार किंवा गळालेल्या लाइना जवळ जाऊ नका.", "१०७८ (NDMA हेल्पलाइन) किंवा ११२ ला कॉल करा; कुटुंब एकत्र ठेवा आणि स्थलांतर मार्गांचे पालन करा."]
+      }
+    },
+    "air": {
+      "low": {
+        "en": ["Air quality is acceptable; normal outdoor activity is fine.", "Sensitive groups may carry an inhaler if prescribed."],
+        "hi": ["वायु गुणवत्ता ठीक है; सामान्य बाहरी गतिविधि कर सकते हैं।", "संवेदनशील लोग निर्धारित हो तो इनहेलर रखें।"],
+        "mr": ["हवेची गुणवत्ता ठीक आहे; सामान्य बाह्य क्रियाकलाप करा.", "संवेदनशील लोकांनी औषध असल्यास इन्हेलर सोबत ठेवा."]
+      },
+      "moderate": {
+        "en": ["Reduce prolonged outdoor exertion; morning walkers shift to indoor exercise.", "N95 masks help sensitive groups on high-traffic roads.", "Keep windows closed during 06:00-10:00 peak."],
+        "hi": ["लंबे बाहरी व्यायाम कम करें; सुबह की वॉक इनडोर व्यायाम से बदलें।", "व्यस्त सड़कों पर संवेदनशील लोग N95 मास्क पहनें।", "सुबह 6-10 बजे के समय खिड़कियां बंद रखें।"],
+        "mr": ["बाहेर जास्त व्यायाम कमी करा; सकाळची चाल घरातील व्यायामाने बदला.", "व्यस्त रस्त्यांवर संवेदनशील लोकांनी N95 मास्क वापरा.", "सकाळी ६-१० या वेळेत खिडक्या बंद ठेवा."]
+      },
+      "high": {
+        "en": ["EMERGENCY: Everyone should avoid outdoor exertion; keep windows closed.", "Asthma/COPD patients: keep reliever inhaler accessible; seek help for breathlessness.", "Report open waste burning; it worsens the episode."],
+        "hi": ["आपातकाल: सभी बाहरी व्यायाम बंद करें; खिड़कियां बंद रखें।", "अस्थमा/कॉपडी के मरीज़ राहत देने वाला इनहेलर साथ रखें; सांस फूलने पर मदद लें।", "खुले कचरा जलाने की शिकायत करें; इससे स्थिति बिगड़ती है।"],
+        "mr": ["आपत्कालीन: सर्वांनी बाहेरील व्यायाम बंद करा; खिडक्या बंद ठेवा.", "दमा/COPD रुग्णांनी इन्हेलर जवळ ठेवा; दम ताणल्यास मदत मागा.", "उघड्यावर कचरा जाळण्याची तक्रार करा; यामुळे परिस्थिती बिघडते."]
+      }
+    }
+  },
+  "glossary": {
+    "risk_bands": {"low": "Low", "moderate": "Moderate", "high": "High"},
+    "risk_bands_hi": {"low": "कम", "moderate": "मध्यम", "high": "उच्च"},
+    "risk_bands_mr": {"low": "कमी", "moderate": "मध्यम", "high": "उच्च"}
+  }
+}
