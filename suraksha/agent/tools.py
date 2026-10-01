@@ -175,6 +175,105 @@ def anomaly_text(district_id: str, language: str | None = None) -> str:
     return "\n".join(f"⚠️ [{e['kind']}] {e['message']} ({e['day']})" for e in events)
 
 
+def _hazard_reason(hazard: str, detail: dict) -> str:
+    """One traceable line explaining the score, built from the engine's drivers."""
+    if hazard == "heat":
+        hi = detail.get("heat_index_c")
+        tmax = detail.get("tmax_c")
+        if hi is not None:
+            return f"Heat index {hi}°C (T-max {tmax}°C)"
+    elif hazard == "flood":
+        r3 = detail.get("rain_3day_mm")
+        p90 = detail.get("heavy_day_p90_mm")
+        if r3 is not None:
+            return f"3-day rain {r3}mm vs heavy-day p90 {p90}mm"
+    elif hazard == "air":
+        pm = detail.get("pm25_ugm3")
+        aqi = detail.get("aqi_us_epa")
+        if pm is not None:
+            return f"PM2.5 {pm} µg/m³ (US-EPA AQI {aqi})"
+    return "Drivers unavailable" if detail else "No driver detail recorded"
+
+
+def watchlist(
+    limit: int = 10,
+    hazard: str | None = None,
+    days_ahead: int = 2,
+) -> list[dict]:
+    """Districts ranked by worst expected hazard score in the next `days_ahead` days.
+
+    The official-facing "where do we act first" view: each row carries the
+    driving hazard, its score/band, and a one-line reason traceable to the
+    risk-engine drivers (clarity criterion). Districts with no scored rows in
+    the window are omitted — an absent district means "no data", never "safe".
+    """
+    if hazard not in (None, "all", "heat", "flood", "air"):
+        raise ValueError(f"unknown hazard '{hazard}'")
+    today = date.today()
+    window_end = today + timedelta(days=max(0, days_ahead))
+    with SessionLocal() as db:
+        q = db.query(RiskScore).filter(
+            RiskScore.day >= today,
+            RiskScore.day <= window_end,
+        )
+        if hazard and hazard != "all":
+            q = q.filter(RiskScore.hazard == hazard)
+        rows = q.all()
+        if not rows:
+            return []
+        districts = {d.id: d for d in db.query(District).all()}
+
+    # Per district, keep the max-score row per hazard (peak day matters more
+    # than the exact day it happens on — same rule as the alert sweep).
+    per_district: dict[str, dict[str, tuple[float, str, dict, str]]] = {}
+    for r in rows:
+        try:
+            detail = json.loads(r.detail or "{}")
+        except json.JSONDecodeError:
+            detail = {}
+        score = r.score if r.score is not None else -1.0
+        cur = per_district.setdefault(r.district_id, {}).get(r.hazard)
+        if cur is None or score > cur[0]:
+            per_district[r.district_id][r.hazard] = (
+                score,
+                r.band or "unknown",
+                detail,
+                r.day.isoformat(),
+            )
+
+    out: list[dict] = []
+    for did, hazards in per_district.items():
+        d = districts.get(did)
+        if d is None:
+            continue
+        top_hazard, (top_score, top_band, top_detail, peak_day) = max(
+            hazards.items(), key=lambda kv: kv[1][0]
+        )
+        out.append(
+            {
+                "id": did,
+                "name_en": d.name_en,
+                "name_hi": d.name_hi,
+                "name_mr": d.name_mr,
+                "state": d.state,
+                "lat": d.lat,
+                "lon": d.lon,
+                "population": d.population,
+                "overall": round(top_score, 1) if top_score >= 0 else None,
+                "band": top_band,
+                "top_hazard": top_hazard,
+                "peak_day": peak_day,
+                "reason": _hazard_reason(top_hazard, top_detail),
+                "hazards": {
+                    h: {"score": round(v[0], 1) if v[0] >= 0 else None, "band": v[1]}
+                    for h, v in hazards.items()
+                },
+            }
+        )
+    out.sort(key=lambda r: r["overall"] if r["overall"] is not None else -1.0, reverse=True)
+    return out[: max(1, limit)]
+
+
 def tool_schema() -> list[dict]:
     """OpenAI-style tool definitions advertised to the LLM."""
     return [

@@ -17,6 +17,7 @@ Suraksha continuously ingests open climate data for Indian districts, scores hea
 ## ✨ Headline features
 
 - 🗺️ **Live pan-India risk map** — dark-theme MapLibre dashboard, districts colored by computed risk, updated hourly from real data (no canned demo).
+- 🚨 **Watchlist — highest risk now** — districts ranked by worst expected hazard for the next 48h, each with a one-line reason traced to the engine drivers ("3-day rain 210mm vs heavy-day p90 45mm"). Officials' answer to "where do we act first?": `GET /api/watchlist` + a ranked panel on the dashboard.
 - 💬 **WhatsApp + web chat agent** — ask *"क्या अगले 5 दिन में नागपुर में बाढ़ का खतरा है?"* and get a grounded advisory in Hindi. Language auto-detected (English / हिन्दी / मराठी).
 - 🔊 **Voice advisories** — Indic neural TTS (edge-tts) for low-literacy users; on WhatsApp, send **"voice <district>"** or just a voice note and get the advisory back as an audio message.
 - ⚠️ **Explainable anomaly alerts** — *"Daily rainfall 80mm is 4.1× the 30-year normal for this date."*

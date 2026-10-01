@@ -9,17 +9,20 @@ import pandas as pd
 
 
 def _seed_climatology():
-    """Synthetic Pune-like climatology: mild temps, moderate monsoon rain."""
+    """Synthetic Pune-like climatology: mild temps, moderate year-round rain.
+
+    Rain normal/p90 cover ALL days of year so the tests are date-independent:
+    the wet-spell floor must protect the dry season too (see anomaly.py).
+    """
     rows = []
     start = date(2024, 1, 1)
     for i in range(365 * 30):
         d = start + timedelta(days=i)
-        doy = d.timetuple().tm_yday
         rows.append(
             {
                 "day": d.isoformat(),
                 "tavg": 26.0,  # flat all-year normal
-                "precipitation": 2.0 if 150 < doy < 270 else 0.1,
+                "precipitation": 2.0,
             }
         )
     df = pd.DataFrame(rows)
@@ -39,7 +42,7 @@ def test_no_anomalies_on_normal_weather(clean_pune):
                     tavg=26.0,  # exactly normal
                     tmax=31.0,
                     tmin=21.0,
-                    precipitation=0.2,  # well below monsoon p90 (2mm) — no wet spell
+                    precipitation=0.2,  # well below the 2mm p90 — no wet spell
                     humidity=60,
                     wind=8,
                     is_forecast=False,

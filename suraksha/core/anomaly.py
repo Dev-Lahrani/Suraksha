@@ -94,20 +94,28 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
             if span >= 3:
                 acc = sum(r.precipitation or 0.0 for r in rows if r.precipitation is not None)
                 p90_avg = _avg_p90(clim, newest, lookback_days=span)
-                if p90_avg and acc >= 2.0 * p90_avg * span / 7:
-                    events.append(
-                        {
-                            "day": newest.isoformat(),
-                            "kind": "wet_spell",
-                            "metric": "accumulation_mm",
-                            "value": round(acc, 1),
-                            "expected_mm": round(p90_avg * span / 7, 1),
-                            "message": (
-                                f"{span}-day rainfall total {acc:.0f}mm far exceeds the "
-                                f"heavy-rain climatology (~{p90_avg * span / 7:.0f}mm)"
-                            ),
-                        }
-                    )
+                # Floor the heavy-rain percentile and demand a minimum total:
+                # in the dry season p90 can collapse to ~0.1mm/day, and without
+                # a floor even 1mm over a week would raise a false "wet spell"
+                # (same sensible-default rule as flood_score's 15mm p90).
+                MIN_DAILY_P90_MM = 15.0
+                MIN_SPAN_ACC_MM = 20.0
+                if p90_avg and acc >= MIN_SPAN_ACC_MM:
+                    p90_avg = max(p90_avg, MIN_DAILY_P90_MM)
+                    if acc >= 2.0 * p90_avg * span / 7:
+                        events.append(
+                            {
+                                "day": newest.isoformat(),
+                                "kind": "wet_spell",
+                                "metric": "accumulation_mm",
+                                "value": round(acc, 1),
+                                "expected_mm": round(p90_avg * span / 7, 1),
+                                "message": (
+                                    f"{span}-day rainfall total {acc:.0f}mm far exceeds the "
+                                    f"heavy-rain climatology (~{p90_avg * span / 7:.0f}mm)"
+                                ),
+                            }
+                        )
         return events
 
 

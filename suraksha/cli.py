@@ -47,10 +47,10 @@ def main(argv: list[str] | None = None) -> int:
         import uvicorn
 
         from suraksha.config import get_settings
-        from suraksha.server.scheduler import start_scheduler
 
+        # The scheduler is started inside the FastAPI lifespan (it needs a
+        # running event loop); uvicorn owns the loop.
         s = get_settings()
-        start_scheduler()
         uvicorn.run(
             "suraksha.server.app:app",
             host=args.host or s.host,

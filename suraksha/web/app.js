@@ -277,7 +277,51 @@ function addMsg(text, cls) {
   return div;
 }
 
+/* ----------------------------- watchlist ----------------------------- */
+
+const HAZARD_ICON = { heat: "🔥", flood: "🌊", air: "😷" };
+
+async function loadWatchlist() {
+  const list = document.getElementById("watchlist-list");
+  try {
+    const res = await fetch("/api/watchlist?limit=8");
+    if (!res.ok) throw new Error(res.status);
+    const rows = await res.json();
+    list.innerHTML = "";
+    if (!rows.length) {
+      list.innerHTML = '<div class="wl-empty">No risk data ingested yet — run `python -m suraksha ingest`.</div>';
+      return;
+    }
+    rows.forEach((r, i) => {
+      const row = document.createElement("div");
+      row.className = "wl-row";
+      const icon = HAZARD_ICON[r.top_hazard] || "⚠️";
+      row.innerHTML = `
+        <span class="wl-rank">${i + 1}</span>
+        <span class="wl-name"><span class="nm">${icon} ${r.name_en}</span><span class="rs">${r.reason}</span></span>
+        <span class="wl-score ${r.band}">${r.overall == null ? "–" : Math.round(r.overall)}</span>`;
+      row.title = `${r.name_en} (${r.state}) · ${r.reason} · peak ${r.peak_day} — click for full advisory`;
+      row.onclick = () => openDistrict(r.id);
+      list.appendChild(row);
+    });
+  } catch (err) {
+    console.error("watchlist failed", err);
+    list.innerHTML = '<div class="wl-empty">Watchlist unavailable.</div>';
+  }
+}
+
+function initWatchlist() {
+  document.getElementById("watchlist-head").onclick = () => {
+    const listEl = document.getElementById("watchlist-list");
+    const hidden = listEl.style.display === "none";
+    listEl.style.display = hidden ? "flex" : "none";
+    document.getElementById("wl-toggle").textContent = hidden ? "–" : "+";
+  };
+  loadWatchlist();
+}
+
 /* ----------------------------- boot ----------------------------- */
 
 initMap();
 initChat();
+initWatchlist();

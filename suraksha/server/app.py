@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from suraksha.agent import brain
 from suraksha.agent.i18n import detect_language
-from suraksha.agent.tools import advisory_text, district_context, find_district, forecast_text
+from suraksha.agent.tools import advisory_text, district_context, find_district, forecast_text, watchlist
 from suraksha.config import get_settings
 from suraksha.data.pipeline import run_pipeline
 from suraksha.db import AirQuality, District, RiskScore, SessionLocal, Subscriber, get_db, init_db
@@ -21,6 +21,7 @@ from suraksha.ml.runner import ml_outlook, model_summary
 from suraksha.delivery import voice, whatsapp
 from suraksha.delivery.alerts import subscribe, sweep_subscribers, unsubscribe
 from suraksha.delivery.pdf_brief import build_brief
+from suraksha.server.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
@@ -30,8 +31,13 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 async def lifespan(_: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     init_db()
+    # AsyncIOScheduler needs a running event loop — the lifespan is the one
+    # place that is guaranteed to have one (starting it from the CLI crashes
+    # with "no running event loop" because uvicorn creates the loop later).
+    start_scheduler()
     logger.info("Suraksha API ready")
     yield
+    stop_scheduler()
 
 
 app = FastAPI(title="Suraksha API", version="0.1.0", lifespan=lifespan)
@@ -112,6 +118,20 @@ def risk_map(day: str | None = None, db: Session = Depends(get_db)) -> list[dict
             }
         )
     return out
+
+
+@app.get("/api/watchlist")
+def watchlist_view(
+    limit: int = Query(10, ge=1, le=50),
+    hazard: str = Query("all", pattern="^(all|heat|flood|air)$"),
+    days: int = Query(2, ge=0, le=7),
+) -> list[dict]:
+    """Districts ranked by worst expected hazard in the next `days` days.
+
+    The official-facing watchlist: who needs attention first. Rows are sorted
+    descending by the peak hazard score; `reason` cites the engine driver.
+    """
+    return watchlist(limit=limit, hazard=hazard, days_ahead=days)
 
 
 @app.get("/api/district/{district_id}")
