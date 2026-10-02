@@ -11,6 +11,13 @@ os.environ["DATABASE_URL"] = "sqlite:///data/test_suraksha.db"
 os.environ["NUGEN_API_KEY"] = ""
 os.environ["OPENAI_API_KEY"] = ""
 os.environ["INGEST_INTERVAL_MINUTES"] = "0"
+os.environ["WHATSAPP_TOKEN"] = ""
+os.environ["WHATSAPP_PHONE_NUMBER_ID"] = ""
+os.environ["WHATSAPP_APP_SECRET"] = ""
+os.environ["ADMIN_API_KEY"] = ""
+os.environ["DEMO_MODE"] = "false"
+for language in ("EN", "HI", "MR", "TA", "TE", "KN", "BN"):
+    os.environ[f"TTS_VOICE_{language}"] = ""
 
 TEST_DB = ROOT / "data" / "test_suraksha.db"
 if TEST_DB.exists():
@@ -38,3 +45,8 @@ def clean_pune():
         db.query(Climatology).filter(Climatology.district_id == "PUNE").delete()
         db.commit()
     yield
+    with SessionLocal() as db:
+        db.query(WeatherDay).filter(WeatherDay.district_id == "PUNE").delete()
+        db.query(RiskScore).filter(RiskScore.district_id == "PUNE").delete()
+        db.query(Climatology).filter(Climatology.district_id == "PUNE").delete()
+        db.commit()

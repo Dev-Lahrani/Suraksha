@@ -23,6 +23,8 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
             .filter(
                 WeatherDay.district_id == district_id,
                 WeatherDay.is_forecast.is_(False),
+                WeatherDay.day >= date.today() - timedelta(days=lookback_days),
+                WeatherDay.day <= date.today(),
             )
             .order_by(WeatherDay.day.desc())
             .limit(lookback_days)
@@ -70,7 +72,7 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
             # Extreme daily rain vs normal and vs local p90
             if w.precipitation is not None and w.precipitation >= 20:
                 ratio = w.precipitation / max(rain_normal, 1.0)
-                if ratio >= 3 or (rain_p90 and w.precipitation >= 2 * rain_p90):
+                if rain_normal is not None and c and (ratio >= 3 or (rain_p90 and w.precipitation >= 2 * rain_p90)):
                     events.append(
                         {
                             "day": w.day.isoformat(),
@@ -91,7 +93,7 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
             days = [r.day for r in rows]
             newest, oldest = max(days), min(days)
             span = (newest - oldest).days + 1
-            if span >= 3:
+            if span >= 3 and len(rows) == span and all(r.precipitation is not None for r in rows):
                 acc = sum(r.precipitation or 0.0 for r in rows if r.precipitation is not None)
                 p90_avg = _avg_p90(clim, newest, lookback_days=span)
                 # Floor the heavy-rain percentile and demand a minimum total:
@@ -102,17 +104,17 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
                 MIN_SPAN_ACC_MM = 20.0
                 if p90_avg and acc >= MIN_SPAN_ACC_MM:
                     p90_avg = max(p90_avg, MIN_DAILY_P90_MM)
-                    if acc >= 2.0 * p90_avg * span / 7:
+                    if acc >= 2.0 * p90_avg * span:
                         events.append(
                             {
                                 "day": newest.isoformat(),
                                 "kind": "wet_spell",
                                 "metric": "accumulation_mm",
                                 "value": round(acc, 1),
-                                "expected_mm": round(p90_avg * span / 7, 1),
+                                "expected_mm": round(p90_avg * span, 1),
                                 "message": (
                                     f"{span}-day rainfall total {acc:.0f}mm far exceeds the "
-                                    f"heavy-rain climatology (~{p90_avg * span / 7:.0f}mm)"
+                                    f"heavy-rain climatology (~{p90_avg * span:.0f}mm)"
                                 ),
                             }
                         )

@@ -113,10 +113,14 @@ async def _alert_one(subscriber_id: str) -> list[str]:
             "name_en": d.name_en,
             "name_hi": d.name_hi,
             "name_mr": d.name_mr,
+            "name_ta": d.name_ta,
+            "name_te": d.name_te,
+            "name_kn": d.name_kn,
+            "name_bn": d.name_bn,
             "state": d.state,
         }
 
-        hazards = _high_risk_hazards(db, s.district_id)
+        hazards = _high_risk_hazards(db, s.district_id, lang)
         anomalies = detect_anomalies(s.district_id, lookback_days=2)
 
         # Dedupe: exact (day, reason) rows already sent, plus any same-reason
@@ -136,6 +140,7 @@ async def _alert_one(subscriber_id: str) -> list[str]:
             key = (date.fromisoformat(e["day"]), reason)
             if key not in existing and reason not in recent_reasons:
                 fresh.append(key)
+        fresh = list(dict.fromkeys(fresh))
 
         if not fresh:
             return []
@@ -166,7 +171,7 @@ async def _alert_one(subscriber_id: str) -> list[str]:
         return [f"{day.isoformat()}:{reason}" for day, reason in fresh]
 
 
-def _high_risk_hazards(db: Session, district_id: str) -> list[dict]:
+def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> list[dict]:
     """High-band risk rows in the lookahead window, formatted like advisory hazards."""
     from suraksha.agent.i18n import playbook_actions
 
@@ -191,13 +196,14 @@ def _high_risk_hazards(db: Session, district_id: str) -> list[dict]:
             detail = json.loads(r.detail or "{}")
         except json.JSONDecodeError:
             pass
+        detail["peak_day"] = r.day.isoformat()
         out.append(
             {
                 "hazard": r.hazard,
                 "score": r.score or 0.0,
                 "band": r.band or "high",
                 "detail": detail,
-                "actions": playbook_actions(r.hazard, "high", "en"),
+                "actions": playbook_actions(r.hazard, "high", language),
                 "_day": r.day,
             }
         )

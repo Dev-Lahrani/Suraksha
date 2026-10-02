@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
@@ -124,6 +125,7 @@ def _upsert_weather(district_id: str, rows: list[dict]) -> int:
             if w is None:
                 w = WeatherDay(district_id=district_id, day=day)
                 db.add(w)
+                existing[day] = w
             w.tavg = r["tavg"]
             w.tmax = r["tmax"]
             w.tmin = r["tmin"]
@@ -147,6 +149,7 @@ def _upsert_aq(district_id: str, rows: list[dict]) -> int:
             if a is None:
                 a = AirQuality(district_id=district_id, hour=r["hour"])
                 db.add(a)
+                existing[r["hour"]] = a
             a.pm25 = r["pm25"]
             a.pm10 = r["pm10"]
         db.commit()
@@ -154,21 +157,20 @@ def _upsert_aq(district_id: str, rows: list[dict]) -> int:
 
 
 def latest_pm25(district_id: str) -> float | None:
-    """Most recent non-null PM2.5 reading."""
+    """Mean of available past 24h CAMS readings; never future or stale data."""
     with SessionLocal() as db:
-        row = (
-            db.query(AirQuality)
-            .filter(AirQuality.district_id == district_id, AirQuality.pm25.isnot(None))
-            .order_by(AirQuality.hour.desc())
-            .first()
-        )
-        return row.pm25 if row else None
+        now = datetime.now(ZoneInfo("Asia/Kolkata")).replace(tzinfo=None)
+        rows = db.query(AirQuality).filter(
+            AirQuality.district_id == district_id, AirQuality.pm25.isnot(None),
+            AirQuality.hour >= (now - timedelta(hours=24)).isoformat(timespec="minutes"),
+            AirQuality.hour <= now.isoformat(timespec="minutes"),
+        ).all()
+        return sum(r.pm25 for r in rows) / len(rows) if rows else None
 
 
 def compute_and_store_risks(district_id: str) -> int:
     """Score all stored days (obs + forecast) for one district."""
     clim = climatology_map(district_id)
-    pm25 = latest_pm25(district_id)
     count = 0
     with SessionLocal() as db:  # type: Session
         rows = (
@@ -177,12 +179,20 @@ def compute_and_store_risks(district_id: str) -> int:
             .order_by(WeatherDay.day)
             .all()
         )
+        aq_by_day: dict[str, list[float]] = {}
+        for aq in db.query(AirQuality).filter(AirQuality.district_id == district_id):
+            if aq.pm25 is not None:
+                aq_by_day.setdefault(aq.hour[:10], []).append(aq.pm25)
         by_day = {w.day: w for w in rows}
         existing = {
             (r.day, r.hazard): r
             for r in db.query(RiskScore).filter(RiskScore.district_id == district_id)
         }
         for w in rows:
+            day_aq = aq_by_day.get(w.day.isoformat(), [])
+            pm25 = sum(day_aq) / len(day_aq) if day_aq else None
+            rain_values = [by_day[w.day - timedelta(days=k)].precipitation
+                           for k in range(3) if w.day - timedelta(days=k) in by_day]
             rain_3day = sum(
                 by_day[w.day - timedelta(days=k)].precipitation or 0.0
                 for k in range(3)
@@ -195,13 +205,16 @@ def compute_and_store_risks(district_id: str) -> int:
                 tmax=w.tmax,
                 tavg=w.tavg,
                 precipitation=w.precipitation,
-                rain_3day=rain_3day if rain_3day else None,
+                rain_3day=rain_3day if rain_values and all(v is not None for v in rain_values) else None,
                 rain_p90=rain_p90,
                 humidity=w.humidity,
                 pm25=pm25,
             )
             for hazard, res in scores.items():
                 if res["score"] is None:
+                    stale = existing.get((w.day, hazard))
+                    if stale is not None:
+                        db.delete(stale)
                     continue
                 import json as _json
 

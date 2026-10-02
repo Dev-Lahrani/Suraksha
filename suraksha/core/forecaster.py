@@ -53,12 +53,9 @@ def build_frame(history: pd.DataFrame, clim: dict[int, dict[str, float | None]])
     # targets = next day values (temperature as anomaly vs next-day normal)
     df["tavg_t1"] = df["tavg"].shift(-1)
     df["rain_t1"] = df["rain"].shift(-1)
-    df["tavg_normal_t1"] = df["doy"].map(
-        lambda d: (clim.get(d % 366 + 1) or {}).get("tavg_normal")
-    )
-    df["rain_normal_t1"] = df["doy"].map(
-        lambda d: (clim.get(d % 366 + 1) or {}).get("rain_normal")
-    )
+    next_doy = (df["day"] + pd.Timedelta(days=1)).dt.date.map(doy_aligned)
+    df["tavg_normal_t1"] = next_doy.map(lambda d: (clim.get(d) or {}).get("tavg_normal"))
+    df["rain_normal_t1"] = next_doy.map(lambda d: (clim.get(d) or {}).get("rain_normal"))
     df["t_anom_t1"] = df["tavg_t1"] - df["tavg_normal_t1"]
     return df.dropna(subset=FEATURES + ["tavg_t1", "rain_t1", "t_anom_t1"])
 
@@ -163,8 +160,8 @@ def _next_features(
     hist: pd.DataFrame, clim: dict[int, dict[str, float | None]], day: date
 ) -> dict[str, float] | None:
     last = hist.iloc[-1]
-    doy = doy_aligned(day)
-    nxt = clim.get(doy % 366 + 1) or {}
+    doy = doy_aligned(pd.Timestamp(last["day"]).date())
+    nxt = clim.get(doy_aligned(day)) or {}
     cur = clim.get(doy_aligned(pd.Timestamp(last["day"]).date())) or {}
     t_anom = last["tavg"] - (cur.get("tavg_normal") or last["tavg"])
     rain_hist = hist["precipitation"].tail(3).tolist()

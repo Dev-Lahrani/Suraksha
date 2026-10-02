@@ -7,6 +7,7 @@ path produced the audio.
 
 from __future__ import annotations
 
+import asyncio
 import io
 import logging
 import math
@@ -27,9 +28,10 @@ async def synthesize(text: str, language: str = "en") -> tuple[bytes, bool]:
 
             communicate = edge_tts.Communicate(text, voice)
             buf = io.BytesIO()
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    buf.write(chunk["data"])
+            async with asyncio.timeout(15):
+                async for chunk in communicate.stream():
+                    if chunk["type"] == "audio":
+                        buf.write(chunk["data"])
             data = buf.getvalue()
             if data:
                 return data, True
@@ -44,6 +46,10 @@ def _voice_for(language: str) -> str:
         "hi": s.tts_voice_hi,
         "mr": s.tts_voice_mr,
         "en": s.tts_voice_en,
+        "ta": s.tts_voice_ta,
+        "te": s.tts_voice_te,
+        "kn": s.tts_voice_kn,
+        "bn": s.tts_voice_bn,
     }.get(language, "")
 
 

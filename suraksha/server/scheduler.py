@@ -43,14 +43,16 @@ def start_scheduler() -> AsyncIOScheduler | None:
     """Start hourly ingestion; call once from the CLI/server startup."""
     global _scheduler
     minutes = get_settings().ingest_interval_minutes
-    if minutes <= 0:
+    if minutes <= 0 or get_settings().demo_mode:
         logger.info("scheduler disabled (INGEST_INTERVAL_MINUTES<=0)")
         return None
-    _scheduler = AsyncIOScheduler()
+    if _scheduler and _scheduler.running:
+        return _scheduler
+    _scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
     _scheduler.add_job(_job, IntervalTrigger(minutes=minutes), id="ingest", max_instances=1)
     _scheduler.add_job(
         _alert_job,
-        CronTrigger(hour=7, minute=30),
+        CronTrigger(hour=7, minute=30, timezone="Asia/Kolkata"),
         id="alert-sweep",
         max_instances=1,
         misfire_grace_time=3600,

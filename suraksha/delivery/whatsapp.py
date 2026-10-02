@@ -27,7 +27,7 @@ async def send_text(to: str, body: str) -> bool:
 
 
 async def send_voice_note(to: str, ogg_data: bytes) -> bool:
-    """Upload audio and deliver it as a WhatsApp voice note (ogg/opus)."""
+    """Upload edge-tts MP3 as a WhatsApp audio message (not OGG/Opus)."""
     if not configured():
         logger.info("WhatsApp not configured; skipping voice note (%d bytes)", len(ogg_data))
         return False
@@ -39,7 +39,7 @@ async def send_voice_note(to: str, ogg_data: bytes) -> bool:
                 f"{base}/media",
                 headers={"Authorization": f"Bearer {s.whatsapp_token}"},
                 data={"messaging_product": "whatsapp", "type": "audio"},
-                files={"file": ("advisory.ogg", ogg_data, "audio/ogg")},
+                files={"file": ("advisory.mp3", ogg_data, "audio/mpeg")},
             )
             up.raise_for_status()
             media_id = up.json().get("id")

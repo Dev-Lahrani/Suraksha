@@ -18,7 +18,7 @@ Suraksha continuously ingests open climate data for Indian districts, scores hea
 
 - 🗺️ **Live pan-India risk map** — dark-theme MapLibre dashboard, districts colored by computed risk, updated hourly from real data (no canned demo).
 - 🚨 **Watchlist — highest risk now** — districts ranked by worst expected hazard for the next 48h, each with a one-line reason traced to the engine drivers ("3-day rain 210mm vs heavy-day p90 45mm"). Officials' answer to "where do we act first?": `GET /api/watchlist` + a ranked panel on the dashboard.
-- 💬 **WhatsApp + web chat agent** — ask *"क्या अगले 5 दिन में नागपुर में बाढ़ का खतरा है?"* and get a grounded advisory in Hindi. Language auto-detected (English / हिन्दी / मराठी).
+- 💬 **WhatsApp + web chat agent** — ask *"क्या अगले 5 दिन में नागपुर में बाढ़ का खतरा है?"* and get a grounded advisory in Hindi. Language auto-detected (English / हिन्दी / मराठी / தமிழ் / తెలుగు / ಕನ್ನಡ / বাংলা). New language translations are experimental and need native-speaker safety review.
 - 🔊 **Voice advisories** — Indic neural TTS (edge-tts) for low-literacy users; on WhatsApp, send **"voice <district>"** or just a voice note and get the advisory back as an audio message.
 - ⚠️ **Explainable anomaly alerts** — *"Daily rainfall 80mm is 4.1× the 30-year normal for this date."*
 - 📄 **One-page PDF district brief** — color-coded risk table, 7-day outlook, anomalies, sources. For district officials.
@@ -60,13 +60,39 @@ cp .env.example .env               # then edit:
 
 Without keys everything still works — the agent falls back to deterministic multilingual templates.
 
+## Hackathon demo without API keys
+
+```bash
+# Separate synthetic database; never use this mode for real warnings.
+DEMO_MODE=true DATABASE_URL=sqlite:///data/demo.db python -m suraksha run
+```
+
+The dashboard labels this mode **DEMO / synthetic data**. Chat, the watchlist,
+district advisories, forecast charts and PDF briefs work without external APIs.
+Map/chart libraries load from CDNs, so pre-load the page before an offline demo;
+chat and the watchlist still work if those libraries cannot load. Voice falls back
+to the browser's installed speech voices, or an explicit text-only message.
+
+Live mode starts ingestion in the background immediately and then hourly. First
+archive ingestion can take several minutes due to free API rate limits. Public
+hosting needs persistent storage if you want to retain history; `render.yaml`'s
+free container storage is ephemeral. No paid LLM is required. WhatsApp requires
+your own Meta credentials and may have provider charges/limits; web chat is the
+credential-free demo path.
+
+For public hosting, set `ADMIN_API_KEY` and use `X-API-Key` for administrative
+endpoints. Without a key, administration is local-only. Set `WHATSAPP_APP_SECRET`
+for signed incoming webhooks and a unique `WHATSAPP_VERIFY_TOKEN` for verification.
+Subscription management APIs are administrative; web-chat subscription commands
+remain available for demo users. See [AUDIT.md](AUDIT.md) for remaining limitations.
+
 ## 🧪 Tests (fully offline)
 
 ```bash
 python -m pytest -q
 ```
 
-~80 tests: risk engines, i18n, forecaster + model persistence (synthetic data), anomaly detection (seeded DB), ingestion pipeline (mocked HTTP), chat brain, voice synthesis, PDF brief, and FastAPI endpoints. No network, no keys, runs in seconds.
+Offline tests cover: risk engines, i18n, forecaster + model persistence (synthetic data), anomaly detection (seeded DB), ingestion pipeline (mocked HTTP), chat brain, voice synthesis, PDF brief, and FastAPI endpoints. No network, no keys, runs in seconds.
 
 ## 🏗️ Architecture
 
@@ -112,7 +138,7 @@ suraksha/
 ## ⚠️ Honest limitations (by design)
 
 - Flood risk is a **rainfall-based proxy**, not a hydrological model — labelled as such everywhere.
-- District registry is 40 curated districts in v1 (extendable to all ~780; the schema is ready).
+- District registry is 42 curated districts in v1, not all Indian districts (extendable; the schema is ready).
 - The GBM forecaster is next-day only and is shown only when it beats the climatology baseline; on typical district history (~2 years of observations) it may legitimately be withheld.
 - WhatsApp voice-note *input* is not transcribed yet (Indic ASR is a stretch goal) — it triggers the voice-advisory flow instead.
 

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import hmac
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
@@ -9,6 +12,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from suraksha.agent import brain
@@ -34,15 +38,46 @@ async def lifespan(_: FastAPI):
     # AsyncIOScheduler needs a running event loop — the lifespan is the one
     # place that is guaranteed to have one (starting it from the CLI crashes
     # with "no running event loop" because uvicorn creates the loop later).
+    settings = get_settings()
+    if settings.demo_mode:
+        from suraksha.data.demo import seed_demo
+        seed_demo()
     start_scheduler()
+    task = None
+    if settings.ingest_on_startup and not settings.demo_mode and settings.ingest_interval_minutes > 0:
+        task = asyncio.create_task(run_pipeline())
     logger.info("Suraksha API ready")
-    yield
-    stop_scheduler()
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        stop_scheduler()
 
 
 app = FastAPI(title="Suraksha API", version="0.1.0", lifespan=lifespan)
 
 
+def require_admin(request: Request) -> None:
+    settings = get_settings()
+    key = settings.admin_api_key
+    if key:
+        if not hmac.compare_digest(request.headers.get("X-API-Key", ""), key):
+            raise HTTPException(401, "Invalid API key")
+    elif request.client and request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+        raise HTTPException(403, "Remote administration requires ADMIN_API_KEY")
+
+
+def known_district(district_id: str, db: Session = Depends(get_db)) -> None:
+    if db.get(District, district_id) is None:
+        raise HTTPException(404, f"Unknown district {district_id}")
+
+
+# Apply the same existence check to all district routes, including audio/text.
 # ----------------------------- Dashboard SPA -----------------------------
 
 @app.get("/")
@@ -64,7 +99,7 @@ def blocked_page() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "time": date.today().isoformat()}
+    return {"status": "ok", "time": date.today().isoformat(), "demo": get_settings().demo_mode}
 
 
 @app.get("/api/districts")
@@ -76,6 +111,10 @@ def list_districts(db: Session = Depends(get_db)) -> list[dict]:
             "name_en": d.name_en,
             "name_hi": d.name_hi,
             "name_mr": d.name_mr,
+            "name_ta": d.name_ta,
+            "name_te": d.name_te,
+            "name_kn": d.name_kn,
+            "name_bn": d.name_bn,
             "state": d.state,
             "lat": d.lat,
             "lon": d.lon,
@@ -86,12 +125,10 @@ def list_districts(db: Session = Depends(get_db)) -> list[dict]:
 
 
 @app.get("/api/risk-map")
-def risk_map(day: str | None = None, db: Session = Depends(get_db)) -> list[dict]:
+def risk_map(day: date | None = None, db: Session = Depends(get_db)) -> list[dict]:
     """Latest risk per district per hazard (for the map; day = YYYY-MM-DD)."""
-    q = db.query(RiskScore)
-    if day:
-        q = q.filter(RiskScore.day == date.fromisoformat(day))
-    rows = q.all()
+    selected_day = day or date.today()
+    rows = db.query(RiskScore).filter(RiskScore.day == selected_day).all()
     latest: dict[str, dict] = {}
     for r in rows:
         cur = latest.setdefault(r.district_id, {})
@@ -109,6 +146,10 @@ def risk_map(day: str | None = None, db: Session = Depends(get_db)) -> list[dict
                 "name_en": d.name_en,
                 "name_hi": d.name_hi,
                 "name_mr": d.name_mr,
+                "name_ta": d.name_ta,
+                "name_te": d.name_te,
+                "name_kn": d.name_kn,
+                "name_bn": d.name_bn,
                 "state": d.state,
                 "lat": d.lat,
                 "lon": d.lon,
@@ -134,7 +175,7 @@ def watchlist_view(
     return watchlist(limit=limit, hazard=hazard, days_ahead=days)
 
 
-@app.get("/api/district/{district_id}")
+@app.get("/api/district/{district_id}", dependencies=[Depends(known_district)])
 def district_detail(district_id: str, lang: str = "en") -> dict:
     ctx = district_context(district_id)
     if not ctx:
@@ -143,7 +184,7 @@ def district_detail(district_id: str, lang: str = "en") -> dict:
     return {**ctx, "advisory": advisory}
 
 
-@app.get("/api/district/{district_id}/forecast")
+@app.get("/api/district/{district_id}/forecast", dependencies=[Depends(known_district)])
 def district_forecast(district_id: str) -> list[dict]:
     ctx = district_context(district_id)
     if not ctx:
@@ -151,7 +192,7 @@ def district_forecast(district_id: str) -> list[dict]:
     return ctx.get("forecast", [])
 
 
-@app.get("/api/district/{district_id}/air-quality")
+@app.get("/api/district/{district_id}/air-quality", dependencies=[Depends(known_district)])
 def district_air(district_id: str, db: Session = Depends(get_db)) -> list[dict]:
     since = (date.today() - timedelta(days=2)).isoformat()
     rows = (
@@ -163,13 +204,13 @@ def district_air(district_id: str, db: Session = Depends(get_db)) -> list[dict]:
     return [{"hour": r.hour, "pm25": r.pm25, "pm10": r.pm10} for r in rows]
 
 
-@app.get("/api/district/{district_id}/advisory")
+@app.get("/api/district/{district_id}/advisory", dependencies=[Depends(known_district)])
 def district_advisory(district_id: str, lang: str = "en") -> dict:
     text, language = advisory_text(district_id, lang)
     return {"text": text, "language": language}
 
 
-@app.get("/api/district/{district_id}/forecast-text")
+@app.get("/api/district/{district_id}/forecast-text", dependencies=[Depends(known_district)])
 def district_forecast_text(district_id: str, lang: str = "en") -> dict:
     return {"text": forecast_text(district_id, lang)}
 
@@ -201,38 +242,44 @@ def district_brief(district_id: str) -> Response:
     return Response(pdf, media_type="application/pdf")
 
 
-@app.post("/api/district/{district_id}/voice")
+@app.post("/api/district/{district_id}/voice", dependencies=[Depends(known_district)])
 async def district_voice(district_id: str, lang: str = "hi") -> Response:
     text, language = advisory_text(district_id, lang)
     audio, is_tts = await voice.synthesize(text, language)
     return Response(
         audio,
-        media_type="audio/ogg" if is_tts else "audio/wav",
+        media_type="audio/mpeg" if is_tts else "audio/wav",
         headers={"X-TTS-Engine": "edge-tts" if is_tts else "fallback"},
     )
 
 
+class ChatInput(BaseModel):
+    session_id: str = Field(default="web", min_length=1, max_length=128)
+    message: str = Field(max_length=4000)
+
+
 @app.post("/api/chat")
-async def chat(request: Request) -> dict:
-    body = await request.json()
-    session_id = str(body.get("session_id") or "web")[:128]
-    message = str(body.get("message") or "")
+async def chat(body: ChatInput) -> dict:
+    session_id = body.session_id
+    message = body.message
     if not message.strip():
         raise HTTPException(400, "message required")
     reply = await brain.handle_message(session_id, message)
     return {"reply": reply}
 
 
-@app.post("/api/ingest")
+@app.post("/api/ingest", dependencies=[Depends(require_admin)])
 async def ingest(force: bool = False) -> dict:
     """Manual pipeline trigger (also run hourly by the scheduler)."""
+    if get_settings().demo_mode:
+        raise HTTPException(409, "Live ingestion is disabled in offline demo mode")
     summary = await run_pipeline(force=force)
     return JSONResponse(summary)
 
 
 # ----------------------------- Subscriptions & alerts -----------------------------
 
-@app.post("/api/subscribers")
+@app.post("/api/subscribers", dependencies=[Depends(require_admin)])
 async def create_subscriber(request: Request) -> dict:
     """Register a subscriber (id + district). Used by the dashboard button too."""
     body = await request.json()
@@ -247,7 +294,7 @@ async def create_subscriber(request: Request) -> dict:
     return {"status": "subscribed", "id": sid, "district_id": district_id}
 
 
-@app.get("/api/subscribers/{subscriber_id}")
+@app.get("/api/subscribers/{subscriber_id}", dependencies=[Depends(require_admin)])
 def get_subscriber(subscriber_id: str, response: Response) -> dict:
     with SessionLocal() as db:
         s = db.get(Subscriber, subscriber_id)
@@ -265,14 +312,14 @@ def get_subscriber(subscriber_id: str, response: Response) -> dict:
         }
 
 
-@app.delete("/api/subscribers/{subscriber_id}")
+@app.delete("/api/subscribers/{subscriber_id}", dependencies=[Depends(require_admin)])
 def delete_subscriber(subscriber_id: str) -> dict:
     if not unsubscribe(subscriber_id):
         raise HTTPException(404, "Not subscribed")
     return {"status": "unsubscribed"}
 
 
-@app.delete("/api/subscribers/{subscriber_id}/hard")
+@app.delete("/api/subscribers/{subscriber_id}/hard", dependencies=[Depends(require_admin)])
 def delete_subscriber_hard(subscriber_id: str) -> dict:
     """Remove the subscription row entirely (GDPR-style delete)."""
     with SessionLocal() as db:
@@ -284,7 +331,7 @@ def delete_subscriber_hard(subscriber_id: str) -> dict:
     return {"status": "deleted"}
 
 
-@app.post("/api/alerts/sweep")
+@app.post("/api/alerts/sweep", dependencies=[Depends(require_admin)])
 async def alerts_sweep() -> dict:
     """Run the proactive-alert sweep now (normally a daily scheduler job)."""
     return JSONResponse(await sweep_subscribers())
@@ -293,19 +340,34 @@ async def alerts_sweep() -> dict:
 # ----------------------------- WhatsApp webhook -----------------------------
 
 @app.get("/webhook/whatsapp")
-def whatsapp_verify(mode: str = Query(""), token: str = Query(""), challenge: str = Query("")):
+def whatsapp_verify(request: Request):
     s = get_settings()
-    if mode == "subscribe" and token == s.whatsapp_verify_token:
-        return Response(challenge)
+    params = request.query_params
+    mode = params.get("hub.mode", params.get("mode", ""))
+    token = params.get("hub.verify_token", params.get("token", ""))
+    challenge = params.get("hub.challenge", params.get("challenge", ""))
+    if mode == "subscribe" and s.whatsapp_verify_token and hmac.compare_digest(token, s.whatsapp_verify_token):
+        return Response(challenge, media_type="text/plain")
     raise HTTPException(403, "verification failed")
 
 
 @app.post("/webhook/whatsapp")
 async def whatsapp_incoming(request: Request) -> dict:
-    payload = await request.json()
+    raw = await request.body()
+    secret = get_settings().whatsapp_app_secret
+    if whatsapp.configured() and not secret:
+        raise HTTPException(503, "WHATSAPP_APP_SECRET required")
+    if secret:
+        expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(request.headers.get("X-Hub-Signature-256", ""), expected):
+            raise HTTPException(403, "Invalid webhook signature")
+    try:
+        payload = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid JSON") from exc
     logger.info("WhatsApp webhook received")
     event = whatsapp.extract_webhook_event(payload)
-    if not event:
+    if not event or not event.get("from"):
         return {"status": "ignored"}
     if event.get("type") == "audio":
         # Voice note from the user → reply with the voice advisory flow.

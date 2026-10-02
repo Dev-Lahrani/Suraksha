@@ -132,7 +132,10 @@ def ml_outlook(district_id: str, days: int = 5) -> list[dict] | None:
         if hist is None:
             return None
         clim = climatology_map(district_id)
-        start = date.today() + timedelta(days=1)
+        latest_day = pd.Timestamp(hist.iloc[-1]["day"]).date()
+        if latest_day < date.today() - timedelta(days=2):
+            return None
+        start = latest_day + timedelta(days=1)
         rows = predict(models, hist, clim, start=start, days=days)
         return rows or None
     except Exception:  # noqa: BLE001

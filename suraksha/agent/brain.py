@@ -28,7 +28,7 @@ INTENTS = ("advisory", "forecast", "anomaly")
 _SYSTEM = """You are Suraksha, a friendly climate early-warning assistant on WhatsApp for India.
 Rules:
 1. Ground every number in the CONTEXT provided. Never invent numbers.
-2. Reply in the user's language (en/hi/mr). Keep it under 120 words, WhatsApp style.
+2. Reply in the user's language (en/hi/mr/ta/te/kn/bn). Keep it under 120 words, WhatsApp style.
 3. If the user's district is unclear, ask which district they mean.
 4. Include relevant safety actions when risk is moderate or high."""
 
@@ -71,7 +71,7 @@ def _set_session(session_id: str, language: str | None = None, district_id: str 
 async def handle_message(session_id: str, text: str) -> str:
     """Main entry point used by both the WhatsApp webhook and the web chat API."""
     text = (text or "").strip()
-    lang = detect_language(text)
+    lang = detect_language(text, default=_get_session(session_id).language or "en")
     _set_session(session_id, language=lang)
 
     # Subscription commands take priority over advisory flows.
@@ -160,7 +160,7 @@ async def _handle_voice_request(session_id: str, text: str, lang: str) -> str:
         if ok:
             return voice_sent_text(audio_lang)
     # Any fallback path: return the text with an explicit note about the audio.
-    return base_text + "\n\n" + voice_sent_text(audio_lang)
+    return base_text + "\n\n🎧 Voice note unavailable; the full advisory is shown above."
 
 
 def _handle_subscribe(session_id: str, text: str, lang: str) -> str:
@@ -174,13 +174,15 @@ def _handle_subscribe(session_id: str, text: str, lang: str) -> str:
         if district is None:
             return ask_which_district(lang)
     subscribe(session_id, district.id, lang)
-    name = {"en": district.name_en, "hi": district.name_hi, "mr": district.name_mr}.get(lang) or district.name_en
+    name = {"en": district.name_en, "hi": district.name_hi, "mr": district.name_mr, "ta": district.name_ta, "te": district.name_te, "kn": district.name_kn, "bn": district.name_bn}.get(lang) or district.name_en
     return subscribed_text(name, lang)
 
 
 def _subscription_command(text: str) -> str | None:
     """Classify a message as a subscription command, or None."""
     t = (text or "").strip()
+    if len(t.split()) > 6:
+        return None
     if _STOP_RE.search(t):
         return "stop"
     if _SUBSCRIBE_RE.search(t):
@@ -232,4 +234,15 @@ async def _llm_ground(ctx: dict, base_text: str, lang: str) -> str:
             {"role": "user", "content": prompt},
         ]
     )
-    return reply.strip() if reply else base_text
+    if not reply:
+        return base_text
+    # Prompt grounding alone is not a guarantee. Reject invented numbers or
+    # missing citations/actions and retain the deterministic safety advisory.
+    numbers = set(re.findall(r"\d+(?:\.\d+)?", base_text))
+    if not set(re.findall(r"\d+(?:\.\d+)?", reply)).issubset(numbers):
+        return base_text
+    if "Sources:" not in reply or any(
+        line.strip() not in reply for line in base_text.splitlines() if "➜" in line
+    ):
+        return base_text
+    return reply.strip()

@@ -20,6 +20,8 @@
     header#topbar { position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; gap: 10px; align-items: center; padding: 10px 14px; }
     header#topbar h1 { font-size: 16px; margin: 0; letter-spacing: .4px; }
     header#topbar .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
+    select { max-width: 170px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px; }
+    header#topbar { flex-wrap: wrap; max-width: calc(100% - 24px); }
     #legend { left: 12px; bottom: 12px; z-index: 5; padding: 10px 12px; font-size: 12px; display: flex; gap: 12px; align-items: center; }
     .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
     #side { top: 68px; right: 12px; width: 380px; max-height: calc(100% - 90px); overflow: auto; z-index: 6; padding: 16px; display: none; }
@@ -70,12 +72,16 @@
     <h1>🛡️ Suraksha</h1>
     <span class="tag">AI for Climate Action · SDG 13</span>
     <span class="tag" id="count-tag">— districts</span>
+    <select id="district-picker" aria-label="Choose district"><option value="">Choose district</option></select>
+    <select id="language" aria-label="Advisory language"><option value="en">English</option><option value="hi">हिन्दी</option><option value="mr">मराठी</option><option value="ta">தமிழ்</option><option value="te">తెలుగు</option><option value="kn">ಕನ್ನಡ</option><option value="bn">বাংলা</option></select>
+    <span class="tag" id="data-status">Live data · rainfall-based flood proxy</span>
   </header>
 
   <div id="legend" class="panel">
     <span><span class="dot" style="background:var(--high)"></span>High ≥ 60</span>
     <span><span class="dot" style="background:var(--mod)"></span>Moderate 25–59</span>
     <span><span class="dot" style="background:var(--low)"></span>Low &lt; 25</span>
+    <span><span class="dot" style="background:#64748b"></span>No data ≠ safe</span>
   </div>
 
   <section id="watchlist" class="panel">
@@ -84,6 +90,7 @@
   </section>
 
   <aside id="side" class="panel">
+    <button class="ghost" style="float:right" onclick="document.getElementById('side').style.display='none'" aria-label="Close district">×</button>
     <h2 id="d-name">—</h2>
     <div class="sub" id="d-sub">—</div>
     <div class="badges">

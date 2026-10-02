@@ -1,0 +1,13 @@
+.git
+.venv
+venv
+.env
+.env.*
+!.env.example
+data
+__pycache__
+**/__pycache__
+.pytest_cache
+.freebuff
+.benchmarks
+*.log

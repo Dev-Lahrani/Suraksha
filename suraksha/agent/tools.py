@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from sqlalchemy.orm import Session
 
@@ -23,18 +24,21 @@ def find_district(query: str, db: Session) -> District | None:
         if d.id.lower() == q:
             return d
     for d in districts:  # exact localized name
-        for nm in (d.name_en, d.name_hi, d.name_mr):
+        for nm in (d.name_en, d.name_hi, d.name_mr, d.name_ta, d.name_te, d.name_kn, d.name_bn):
             if nm and nm.lower() == q:
                 return d
+    if len(q) < 3:
+        return None
     for d in districts:  # substring / alias / light inflection match (Indic)
-        for nm in (d.name_en, d.name_hi, d.name_mr):
+        for nm in (d.name_en, d.name_hi, d.name_mr, d.name_ta, d.name_te, d.name_kn, d.name_bn):
             if not nm:
                 continue
             low = nm.lower()
-            if q in low or low in q:
+            if q in low or (low in q and (not low.isascii() or
+                    re.search(r"(?<!\w)" + re.escape(low) + r"(?!\w)", q))):
                 return d
             stem = nm[:-1]  # 'पुण्यात' should still find 'पुणे'
-            if len(stem) >= 3 and stem in (query or ""):
+            if not nm.isascii() and len(stem) >= 3 and stem in (query or ""):
                 return d
     return None
 
@@ -94,6 +98,10 @@ def district_context(district_id: str) -> dict:
                 "name_en": d.name_en,
                 "name_hi": d.name_hi,
                 "name_mr": d.name_mr,
+                "name_ta": d.name_ta,
+                "name_te": d.name_te,
+                "name_kn": d.name_kn,
+                "name_bn": d.name_bn,
                 "state": d.state,
                 "population": d.population,
                 "lat": d.lat,
@@ -155,6 +163,8 @@ def advisory_text(district_id: str, language: str | None = None) -> tuple[str, s
     """Grounded advisory text + detected language (deterministic, no LLM needed)."""
     ctx = district_context(district_id)
     lang = language or detect_language(ctx.get("district", {}).get("name_en", ""), "en")
+    if not ctx:
+        raise ValueError(f"Unknown district {district_id}")
     hazards = build_hazard_list(ctx, lang)
     text = format_advisory(ctx["district"], hazards, lang)
     return text, lang
@@ -163,6 +173,8 @@ def advisory_text(district_id: str, language: str | None = None) -> tuple[str, s
 def forecast_text(district_id: str, language: str | None = None) -> str:
     ctx = district_context(district_id)
     lang = language or "en"
+    if not ctx:
+        raise ValueError(f"Unknown district {district_id}")
     return format_forecast(ctx["district"], ctx.get("forecast", []), lang)
 
 
@@ -255,6 +267,10 @@ def watchlist(
                 "name_en": d.name_en,
                 "name_hi": d.name_hi,
                 "name_mr": d.name_mr,
+                "name_ta": d.name_ta,
+                "name_te": d.name_te,
+                "name_kn": d.name_kn,
+                "name_bn": d.name_bn,
                 "state": d.state,
                 "lat": d.lat,
                 "lon": d.lon,
@@ -286,7 +302,7 @@ def tool_schema() -> list[dict]:
                     "type": "object",
                     "properties": {
                         "district_id": {"type": "string"},
-                        "language": {"type": "string", "enum": ["en", "hi", "mr"]},
+                        "language": {"type": "string", "enum": ["en", "hi", "mr", "ta", "te", "kn", "bn"]},
                     },
                     "required": ["district_id"],
                 },

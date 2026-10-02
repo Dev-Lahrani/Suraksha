@@ -88,6 +88,7 @@ def flood_score(
 
 def aqi_from_pm25(pm25: float) -> int:
     """US-EPA 2024 breakpoint AQI from 24h PM2.5 (µg/m³)."""
+    pm25 = min(500.0, max(0.0, math.floor(pm25 * 10) / 10))
     bps = [
         (0.0, 9.0, 0, 50),
         (9.1, 35.4, 51, 100),

@@ -22,11 +22,20 @@ class Settings(BaseSettings):
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_verify_token: str = "suraksha-verify"
+    whatsapp_app_secret: str = ""
+    # When set, protects manual ingestion, sweeps and subscription management.
+    admin_api_key: str = ""
+    demo_mode: bool = False
+    ingest_on_startup: bool = True
 
     # Voice (edge-tts voices; empty disables TTS)
     tts_voice_hi: str = "hi-IN-MadhurNeural"
     tts_voice_mr: str = "mr-IN-AarohiNeural"
     tts_voice_en: str = "en-IN-NeerjaNeural"
+    tts_voice_ta: str = "ta-IN-PallaviNeural"
+    tts_voice_te: str = "te-IN-ShrutiNeural"
+    tts_voice_kn: str = "kn-IN-SapnaNeural"
+    tts_voice_bn: str = "bn-IN-TanishaaNeural"
 
     # Server
     host: str = "0.0.0.0"

@@ -16,6 +16,8 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
@@ -30,6 +32,10 @@ class District(Base):
     name_en = Column(String, nullable=False)
     name_hi = Column(String, default="")
     name_mr = Column(String, default="")
+    name_ta = Column(String, default="")
+    name_te = Column(String, default="")
+    name_kn = Column(String, default="")
+    name_bn = Column(String, default="")
     state = Column(String, nullable=False)
     lat = Column(Float, nullable=False)
     lon = Column(Float, nullable=False)
@@ -156,12 +162,24 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 def init_db() -> None:
     """Create tables and seed the district registry from resources."""
     Base.metadata.create_all(engine)
+    # create_all does not upgrade existing tables. These additive, nullable
+    # columns keep older hackathon databases usable without losing history.
+    columns = {c["name"] for c in inspect(engine).get_columns("districts")}
+    with engine.begin() as conn:
+        for language in ("ta", "te", "kn", "bn"):
+            column = f"name_{language}"
+            if column not in columns:
+                conn.execute(text(f"ALTER TABLE districts ADD COLUMN {column} VARCHAR DEFAULT ''"))
     districts_file = Path(__file__).resolve().parents[1] / "resources" / "districts.json"
     data = json.loads(districts_file.read_text(encoding="utf-8"))
     with SessionLocal() as db:  # type: Session
         for d in data["districts"]:
-            if db.get(District, d["id"]) is None:
+            district = db.get(District, d["id"])
+            if district is None:
                 db.add(District(**d))
+            else:
+                for key, value in d.items():
+                    setattr(district, key, value)
         db.commit()
 
 

@@ -16,8 +16,6 @@ RUN mkdir -p data
 ENV PORT=8000
 EXPOSE 8000
 
-# init-db creates tables, ingest pulls first data (best-effort - won't fail the build/start
-# if an external API hiccups), then start the API + hourly scheduler.
-CMD python -m suraksha init-db && \
-    (python -m suraksha ingest || true) && \
-    python -m suraksha run --host 0.0.0.0 --port ${PORT}
+# Lifespan initializes storage and ingests in the background so health checks
+# are available immediately, even during slow first-time archive requests.
+CMD python -m suraksha run --host 0.0.0.0 --port ${PORT}

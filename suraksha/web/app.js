@@ -2,7 +2,10 @@
 
 const bandColor = { low: "#22c55e", moderate: "#eab308", high: "#ef4444", unknown: "#64748b" };
 let map, chart = null, districts = [];
-let lastForecast = [];
+let lastForecast = [], selectedDistrict = null, districtRequest = 0;
+const chatSession = sessionStorage.getItem("suraksha-session") || "web-" + crypto.randomUUID();
+sessionStorage.setItem("suraksha-session", chatSession);
+const language = () => document.getElementById("language").value;
 
 /* ------------------------------- map ------------------------------- */
 
@@ -24,6 +27,14 @@ function initMap() {
       const res = await fetch("/api/districts");
       districts = await res.json();
       document.getElementById("count-tag").textContent = `${districts.length} districts`;
+      const picker = document.getElementById("district-picker");
+      districts.forEach(d => {
+        const option = document.createElement("option");
+        option.value = d.id;
+        option.textContent = `${d.name_en} · ${d.state}`;
+        picker.appendChild(option);
+      });
+      picker.onchange = () => picker.value && openDistrict(picker.value);
       const fc = {
         type: "FeatureCollection",
         features: districts.map((d) => ({
@@ -71,6 +82,10 @@ async function paintRisks() {
     });
     colorExpr.push("#64748b");
     radiusExpr.push(7);
+    if (!rows.length) {
+      document.getElementById("data-status").textContent = "No current data · run ingestion or offline demo";
+      return;
+    }
     if (map.getLayer("district-dots")) {
       map.setPaintProperty("district-dots", "circle-color", colorExpr);
       map.setPaintProperty("district-dots", "circle-radius", radiusExpr);
@@ -92,13 +107,22 @@ function worstHazard(hazards) {
 /* --------------------------- district panel --------------------------- */
 
 async function openDistrict(id) {
+  selectedDistrict = id;
+  const requestId = ++districtRequest;
   const side = document.getElementById("side");
   side.style.display = "block";
   ["d-name", "d-sub"].forEach((x) => (document.getElementById(x).textContent = "…"));
 
-  const res = await fetch(`/api/district/${id}?lang=en`);
-  if (!res.ok) return;
-  const ctx = await res.json();
+  let ctx;
+  try {
+    const res = await fetch(`/api/district/${id}?lang=${language()}`);
+    if (!res.ok) throw new Error(res.status);
+    ctx = await res.json();
+  } catch {
+    document.getElementById("advisory").textContent = "District unavailable. Please retry.";
+    return;
+  }
+  if (requestId !== districtRequest) return;
   const d = ctx.district;
 
   document.getElementById("d-name").textContent = `${d.name_en}`;
@@ -106,10 +130,10 @@ async function openDistrict(id) {
 
   const badges = { heat: "b-heat", flood: "b-flood", air: "b-air" };
   const chips = { heat: "c-heat", flood: "c-flood", air: "c-air" };
-  const today = new Date().toISOString().slice(0, 10);
+  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
   const latest = {};
   Object.entries(ctx.risks || {}).forEach(([day, hs]) => {
-    if (day <= today) Object.entries(hs).forEach(([h, r]) => (latest[h] = r));
+    if (day === today) Object.entries(hs).forEach(([h, r]) => (latest[h] = r));
   });
   Object.keys(badges).forEach((h) => {
     const r = latest[h];
@@ -123,7 +147,7 @@ async function openDistrict(id) {
   document.getElementById("advisory").textContent = ctx.advisory || "No advisory available yet.";
   lastForecast = ctx.forecast || [];
   drawForecastChart(lastForecast);
-  loadMlOutlook(id);
+  loadMlOutlook(id, requestId);
 
   document.getElementById("btn-voice").onclick = () => playVoice(id);
   document.getElementById("btn-pdf").onclick = () => window.open(`/api/district/${id}/brief.pdf`, "_blank");
@@ -138,12 +162,13 @@ async function openDistrict(id) {
 
 /* -------- ML outlook (only shown when the model beat climatology) -------- */
 
-async function loadMlOutlook(id) {
+async function loadMlOutlook(id, requestId) {
   const note = document.getElementById("ml-note");
   try {
     const res = await fetch(`/api/district/${id}/ml-outlook`);
     if (!res.ok) return hideMlNote();
     const ml = await res.json();
+    if (requestId !== districtRequest) return;
     if (!ml.available || !ml.rows || !ml.rows.length) return hideMlNote();
     const v = ml.validation || {};
     const parts = ml.rows.map((r) => `${r.day.slice(5)}: ${fmt(r.tavg, "°C")}, ${fmt(r.precipitation, "mm")}`);
@@ -175,10 +200,23 @@ async function playVoice(id) {
   const btn = document.getElementById("btn-voice");
   btn.textContent = "⏳ generating…";
   try {
-    const res = await fetch(`/api/district/${id}/voice?lang=hi`, { method: "POST" });
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    new Audio(url).play();
+    const res = await fetch(`/api/district/${id}/voice?lang=${language()}`, { method: "POST" });
+    if (!res.ok) throw new Error("Voice request failed");
+    if (res.headers.get("X-TTS-Engine") === "fallback") {
+      if (!("speechSynthesis" in window)) throw new Error("Speech unavailable");
+      const utterance = new SpeechSynthesisUtterance(document.getElementById("advisory").textContent);
+      utterance.lang = { en: "en-IN", hi: "hi-IN", mr: "mr-IN", ta: "ta-IN", te: "te-IN", kn: "kn-IN", bn: "bn-IN" }[language()];
+      speechSynthesis.cancel();
+      speechSynthesis.speak(utterance);
+      return;
+    }
+    const url = URL.createObjectURL(await res.blob());
+    const audio = new Audio(url);
+    audio.onended = () => URL.revokeObjectURL(url);
+    audio.onerror = () => URL.revokeObjectURL(url);
+    try { await audio.play(); } catch (error) { URL.revokeObjectURL(url); throw error; }
+  } catch {
+    addMsg("Voice unavailable. Please read the advisory text; browser voices depend on your device.", "bot");
   } finally {
     btn.textContent = "▶ Voice advisory";
   }
@@ -189,7 +227,7 @@ async function playVoice(id) {
 function drawForecastChart(rows, mlRows) {
   const el = document.getElementById("chart");
   if (chart) chart.destroy();
-  if (!rows.length) return;
+  if (!rows.length || typeof Chart === "undefined") return;
   const mlByDay = {};
   (mlRows || []).forEach((r) => (mlByDay[r.day] = r));
   const datasets = [
@@ -257,8 +295,9 @@ function initChat() {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: "web-" + Math.random().toString(36).slice(2, 8), message: text }),
+        body: JSON.stringify({ session_id: chatSession, message: text }),
       });
+      if (!res.ok) throw new Error(res.status);
       const data = await res.json();
       typing.textContent = data.reply || "No reply.";
     } catch {
@@ -322,6 +361,12 @@ function initWatchlist() {
 
 /* ----------------------------- boot ----------------------------- */
 
-initMap();
 initChat();
 initWatchlist();
+if (typeof maplibregl !== "undefined") initMap();
+else document.getElementById("data-status").textContent = "Map library unavailable; chat and watchlist still work";
+document.getElementById("language").onchange = () => selectedDistrict && openDistrict(selectedDistrict);
+fetch("/api/health").then(r => r.json()).then(h => {
+  if (h.demo) document.getElementById("data-status").textContent = "DEMO · synthetic data, not live warnings";
+}).catch(() => {});
+setInterval(() => { if (map) paintRisks(); loadWatchlist(); }, 60000);

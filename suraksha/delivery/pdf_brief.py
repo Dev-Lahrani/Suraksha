@@ -33,7 +33,10 @@ def build_brief(district_id: str) -> bytes:
     small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8, textColor=colors.grey)
 
     story: list = []
-    story.append(Paragraph("🛡️ Suraksha District Risk Brief", title_style))
+    story.append(Paragraph("Suraksha District Risk Brief", title_style))
+    from suraksha.config import get_settings
+    if get_settings().demo_mode:
+        story.append(Paragraph("<b>DEMO - synthetic data, not a live warning</b>", sub_style))
     story.append(
         Paragraph(
             f"{d['name_en']} ({d['state']}) · generated {date.today().isoformat()} · "
