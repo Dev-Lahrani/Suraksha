@@ -9,7 +9,16 @@ from pathlib import Path
 RESOURCES = Path(__file__).resolve().parents[2] / "resources"
 _PLAYBOOKS = json.loads((RESOURCES / "playbooks.json").read_text(encoding="utf-8"))
 
-LANGUAGES = ("en", "hi", "mr", "ta", "te", "kn", "bn")
+_EXTRA = json.loads((RESOURCES / "languages.json").read_text(encoding="utf-8"))
+LANGUAGES = ("en", "hi", "mr", "ta", "te", "kn", "bn", *_EXTRA)
+
+
+def language_catalog() -> list[dict]:
+    names = {"en": "English", "hi": "हिन्दी", "mr": "मराठी", "ta": "தமிழ்", "te": "తెలుగు", "kn": "ಕನ್ನಡ", "bn": "বাংলা"}
+    return [dict(code=code, name=names.get(code, _EXTRA.get(code, {}).get("name")),
+                 locale=_EXTRA.get(code, {}).get("locale", f"{code}-IN"),
+                 direction="rtl" if code == "ur" else "ltr",
+                 experimental=code not in ("en", "hi", "mr")) for code in LANGUAGES]
 
 LABELS: dict[str, dict[str, str]] = {
     "en": {"heat": "Heat", "flood": "Flood", "air": "Air quality", "low": "Low", "moderate": "Moderate", "high": "High", "unknown": "Unknown"},
@@ -19,6 +28,13 @@ LABELS: dict[str, dict[str, str]] = {
     "te": {"heat": "వేడి", "flood": "వరద", "air": "గాలి నాణ్యత", "low": "తక్కువ", "moderate": "మధ్యమ", "high": "ఎక్కువ", "unknown": "తెలియదు"},
     "kn": {"heat": "ಉಷ್ಣ", "flood": "ಪ್ರವಾಹ", "air": "ಗಾಳಿಯ ಗುಣಮಟ್ಟ", "low": "ಕಡಿಮೆ", "moderate": "ಮಧ್ಯಮ", "high": "ಹೆಚ್ಚು", "unknown": "ಗೊತ್ತಿಲಿ"},
     "bn": {"heat": "তাপ", "flood": "বন্যা", "air": "হাওয়ার গুণগত মান", "low": "নিম্ন", "moderate": "মাঝারি", "high": "উচ্চ", "unknown": "অজানা"},
+}
+
+DISTRICT_ALIASES = {
+    "gu": {"પુણે": "PUNE", "અમદાવાદ": "AHMEDABAD", "દિલ્હી": "DELHI_NW", "કચ્છ": "KUTCH"},
+    "pa": {"ਪੁਣੇ": "PUNE", "ਦਿੱਲੀ": "DELHI_NW", "ਚੰਡੀਗੜ੍ਹ": "CHANDIGARH", "ਅਹਿਮਦਾਬਾਦ": "AHMEDABAD"},
+    "ml": {"പുണെ": "PUNE", "തിരുവനന്തപുരം": "THIRUVANANTHAPURAM", "വയനാട്": "WAYANAD", "എറണാകുളം": "ERNAKULAM"},
+    "ur": {"پونے": "PUNE", "دہلی": "DELHI_NW", "حیدرآباد": "HYDERABAD", "احمد آباد": "AHMEDABAD"},
 }
 
 HAZARD_EMOJI = {"heat": "🔥", "flood": "🌊", "air": "😷"}
@@ -103,6 +119,13 @@ _ALERT_HEADER: dict[str, str] = {
     "bn": "🚨 সুরক্ষা সতর্কতা — {district} ({state})",
 }
 
+for _code, _pack in _EXTRA.items():
+    LABELS[_code] = _pack["labels"]
+    for _mapping, _key in ((_INTRO, "intro"), (_ASK_DISTRICT, "ask"), (_FORECAST_HEADER, "forecast"),
+                           (_NO_FORECAST, "no_data"), (_SUBSCRIBED, "subscribed"),
+                           (_STOPPED, "stopped"), (_VOICE_SENT, "voice_sent"), (_ALERT_HEADER, "alert")):
+        _mapping[_code] = _pack[_key]
+
 _SOURCES_LINE = "📍 Sources: Open-Meteo (ERA5 + forecast), US-EPA AQI bands; actions: NDMA guidelines."
 
 
@@ -168,6 +191,10 @@ def detect_language(text: str, default: str = "en") -> str:
     """
     if not text:
         return default
+    for pattern, code in ((r"[\u0A80-\u0AFF]", "gu"), (r"[\u0A00-\u0A7F]", "pa"),
+                          (r"[\u0D00-\u0D7F]", "ml"), (r"[\u0600-\u06FF]", "ur")):
+        if re.search(pattern, text):
+            return code
     if _DEVANAGARI.search(text):
         if any(h in text for h in _MR_HINTS):
             return "mr"
@@ -190,6 +217,8 @@ def playbook_actions(hazard: str, band: str, language: str) -> list[str]:
         return []
     band = band if band in ("low", "moderate", "high") else "moderate"
     lang = language if language in LANGUAGES else "en"
+    if lang in _EXTRA:
+        return list(_EXTRA[lang]["actions"].get(hazard, {}).get(band, []))
     return list(haz.get(band, {}).get(lang, haz.get(band, {}).get("en", [])))
 
 

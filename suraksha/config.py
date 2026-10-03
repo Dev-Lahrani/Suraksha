@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     tts_voice_te: str = "te-IN-ShrutiNeural"
     tts_voice_kn: str = "kn-IN-SapnaNeural"
     tts_voice_bn: str = "bn-IN-TanishaaNeural"
+    tts_voice_gu: str = "gu-IN-DhwaniNeural"
+    tts_voice_pa: str = ""  # device speech fallback; no assumed neural voice
+    tts_voice_ml: str = "ml-IN-SobhanaNeural"
+    tts_voice_ur: str = "ur-IN-GulNeural"
 
     # Server
     host: str = "0.0.0.0"

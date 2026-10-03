@@ -1,372 +1,317 @@
-/* Suraksha dashboard: map, district panel, forecast chart, chat widget. */
-
-const bandColor = { low: "#22c55e", moderate: "#eab308", high: "#ef4444", unknown: "#64748b" };
-let map, chart = null, districts = [];
-let lastForecast = [], selectedDistrict = null, districtRequest = 0;
-const chatSession = sessionStorage.getItem("suraksha-session") || "web-" + crypto.randomUUID();
-sessionStorage.setItem("suraksha-session", chatSession);
-const language = () => document.getElementById("language").value;
-
-/* ------------------------------- map ------------------------------- */
-
-function initMap() {
-  map = new maplibregl.Map({
-    container: "map",
-    style: {
-      version: 8,
-      sources: {},
-      layers: [{ id: "bg", type: "background", paint: { "background-color": "#0b1220" } }],
-    },
-    center: [79, 22.5],
-    zoom: 4.1,
-  });
-  map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-left");
-
-  map.on("load", async () => {
+/* Suraksha command center. No build step, paid services or CDN dependencies. */
+"use strict";
+const $ = id => document.getElementById(id);
+const COLORS = { high: "#ff827f", moderate: "#edbd69", low: "#5ee5bd", unknown: "#758594" };
+const HAZARDS = { heat: "Heat", flood: "Flood proxy", air: "Air quality" };
+const store = {
+  read(key, fallback) {
     try {
-      const res = await fetch("/api/districts");
-      districts = await res.json();
-      document.getElementById("count-tag").textContent = `${districts.length} districts`;
-      const picker = document.getElementById("district-picker");
-      districts.forEach(d => {
-        const option = document.createElement("option");
-        option.value = d.id;
-        option.textContent = `${d.name_en} · ${d.state}`;
-        picker.appendChild(option);
-      });
-      picker.onchange = () => picker.value && openDistrict(picker.value);
-      const fc = {
-        type: "FeatureCollection",
-        features: districts.map((d) => ({
-          type: "Feature",
-          geometry: { type: "Point", coordinates: [d.lon, d.lat] },
-          properties: { id: d.id, name: d.name_en, state: d.state },
-        })),
-      };
-      map.addSource("districts", { type: "geojson", data: fc });
-      map.addLayer({
-        id: "district-dots",
-        type: "circle",
-        source: "districts",
-        paint: {
-          "circle-radius": ["interpolate", ["linear"], ["zoom"], 3, 6, 7, 12],
-          "circle-color": "#64748b",
-          "circle-stroke-color": "#e6edf7",
-          "circle-stroke-width": 1,
-        },
-      });
-      await paintRisks();
-      map.on("click", "district-dots", (e) => {
-        const id = e.features[0].properties.id;
-        openDistrict(id);
-      });
-      map.on("mouseenter", "district-dots", () => (map.getCanvas().style.cursor = "pointer"));
-      map.on("mouseleave", "district-dots", () => (map.getCanvas().style.cursor = ""));
-    } catch (err) {
-      console.error("map init failed", err);
-    }
-  });
+      const value = JSON.parse(localStorage.getItem("suraksha-" + key));
+      if (value == null) return fallback;
+      if (Array.isArray(fallback)) return Array.isArray(value) ? value : fallback;
+      if (fallback && typeof fallback === "object") return typeof value === "object" && !Array.isArray(value) ? value : fallback;
+      return typeof value === "string" ? value : fallback;
+    } catch { return fallback; }
+  },
+  write(key, value) { try { localStorage.setItem("suraksha-" + key, JSON.stringify(value)); } catch { /* private browsing */ } },
+};
+const state = { districts: [], risks: [], languages: [], view: "overview", hazard: "all", day: "", demo: false,
+  saved: new Set(store.read("saved", []).filter(id => typeof id === "string")), compare: [],
+  checks: store.read("checks", {}), selected: null, context: null, generation: 0, refreshGeneration: 0, prepGeneration: 0,
+  session: store.read("session", null) || "web-" + (globalThis.crypto?.randomUUID?.() || Date.now().toString(36) + Math.random().toString(36).slice(2)), chatBusy: false };
+store.write("session", state.session);
+const language = () => $("language").value;
+const band = score => score == null ? "unknown" : score >= 60 ? "high" : score >= 25 ? "moderate" : "low";
+const number = value => value == null || !Number.isFinite(value) ? "—" : Math.round(value).toLocaleString("en-IN");
+const decimal = value => value == null || !Number.isFinite(value) ? "—" : value.toFixed(1);
+const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+const dateOffset = offset => { const d = new Date(today() + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + offset); return d.toISOString().slice(0, 10); };
+const escape = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function node(tag, cls, text) { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; }
+function notify(text) { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => $("toast").hidden = true, 4500); }
+async function api(url, options = {}) {
+  const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 25000);
+  try { const res = await fetch(url, { ...options, signal: controller.signal }); if (!res.ok) throw new Error(`Request failed (${res.status})`); return await res.json(); }
+  finally { clearTimeout(timer); }
 }
-
-async function paintRisks() {
-  try {
-    const res = await fetch("/api/risk-map");
-    const rows = await res.json();
-    const colorExpr = ["match", ["get", "id"]];
-    const radiusExpr = ["match", ["get", "id"]];
-    rows.forEach((r) => {
-      const worst = worstHazard(r.hazards);
-      const band = worst ? worst.band : "unknown";
-      colorExpr.push(r.id, bandColor[band]);
-      radiusExpr.push(r.id, band === "high" ? 13 : band === "moderate" ? 10 : 7);
-    });
-    colorExpr.push("#64748b");
-    radiusExpr.push(7);
-    if (!rows.length) {
-      document.getElementById("data-status").textContent = "No current data · run ingestion or offline demo";
-      return;
-    }
-    if (map.getLayer("district-dots")) {
-      map.setPaintProperty("district-dots", "circle-color", colorExpr);
-      map.setPaintProperty("district-dots", "circle-radius", radiusExpr);
-    }
-  } catch (err) {
-    console.error("risk paint failed", err);
+function riskFor(id) { return state.risks.find(r => r.id === id)?.hazards || {}; }
+function overall(hazards) { const values = Object.values(hazards).map(h => h.score).filter(v => v != null); return values.length ? Math.max(...values) : null; }
+function nameFor(d) { return d["name_" + language()] || d.name_en; }
+function setView(view) {
+  if (!$("view-" + view)) return;
+  state.view = view;
+  document.querySelectorAll(".view").forEach(el => el.hidden = el.id !== "view-" + view);
+  document.querySelectorAll("[data-view]").forEach(el => el.classList.toggle("active", el.dataset.view === view));
+  const titles = { overview: "Overview", explore: "District explorer", saved: "Saved districts", compare: "Compare districts", preparedness: "Preparedness" };
+  $("view-title").textContent = titles[view];
+  $("page-title").textContent = view === "overview" ? "A clearer view of climate risk." : titles[view];
+  if (view === "saved") renderSaved();
+  if (view === "compare") loadCompare();
+  if (view === "preparedness") loadPreparedness();
+}
+function populateRegistry() {
+  const picker = $("compare-picker"); picker.replaceChildren(node("option", "", "Add a district…")); picker.firstChild.value = "";
+  state.districts.forEach(d => { const option = node("option", "", `${d.name_en} · ${d.state}`); option.value = d.id; picker.append(option); });
+  [...new Set(state.districts.map(d => d.state))].sort().forEach(s => { const option = node("option", "", s); option.value = s; $("state-filter").append(option); });
+}
+async function refresh() {
+  const generation = ++state.refreshGeneration;
+  $("refresh").disabled = true;
+  const results = await Promise.allSettled([api("/api/health"), api(`/api/overview?day=${state.day}`), api(`/api/risk-map?day=${state.day}`), api(`/api/watchlist?limit=6&hazard=${state.hazard}`)]);
+  if (generation !== state.refreshGeneration) return;
+  const [health, metrics, risks, watchlist] = results;
+  if (!state.districts.length) {
+    try { state.districts = await api("/api/districts"); populateRegistry(); renderPlot(); renderExplorer(); renderSaved(); }
+    catch { /* keep the retry affordance */ }
   }
+  if (health.status === "fulfilled") {
+    state.demo = health.value.demo;
+    $("connection").lastChild.textContent = health.value.pipeline?.running ? " Updating data" : " API connected";
+    $("mode-banner").hidden = !state.demo;
+  } else $("connection").lastChild.textContent = " Connection unavailable";
+  if (metrics.status === "fulfilled") renderMetrics(metrics.value);
+  if (risks.status === "fulfilled") { state.risks = risks.value; renderPlot(); renderExplorer(); renderSaved(); }
+  if (watchlist.status === "fulfilled") renderWatchlist(watchlist.value);
+  $("error-banner").hidden = results.every(r => r.status === "fulfilled");
+  $("error-banner").textContent = "Some data could not be refreshed. Previous results may be stale. Retry with the refresh button.";
+  $("refresh").disabled = false;
 }
-
-function worstHazard(hazards) {
-  const order = { high: 3, moderate: 2, low: 1, unknown: 0 };
-  let worst = null;
-  Object.values(hazards || {}).forEach((h) => {
-    if (!worst || (order[h.band] || 0) > (order[worst.band] || 0)) worst = h;
-  });
-  return worst;
-}
-
-/* --------------------------- district panel --------------------------- */
-
-async function openDistrict(id) {
-  selectedDistrict = id;
-  const requestId = ++districtRequest;
-  const side = document.getElementById("side");
-  side.style.display = "block";
-  ["d-name", "d-sub"].forEach((x) => (document.getElementById(x).textContent = "…"));
-
-  let ctx;
-  try {
-    const res = await fetch(`/api/district/${id}?lang=${language()}`);
-    if (!res.ok) throw new Error(res.status);
-    ctx = await res.json();
-  } catch {
-    document.getElementById("advisory").textContent = "District unavailable. Please retry.";
-    return;
-  }
-  if (requestId !== districtRequest) return;
-  const d = ctx.district;
-
-  document.getElementById("d-name").textContent = `${d.name_en}`;
-  document.getElementById("d-sub").textContent = `${d.state} · pop ≈ ${d.population.toLocaleString("en-IN")}`;
-
-  const badges = { heat: "b-heat", flood: "b-flood", air: "b-air" };
-  const chips = { heat: "c-heat", flood: "c-flood", air: "c-air" };
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
-  const latest = {};
-  Object.entries(ctx.risks || {}).forEach(([day, hs]) => {
-    if (day === today) Object.entries(hs).forEach(([h, r]) => (latest[h] = r));
-  });
-  Object.keys(badges).forEach((h) => {
-    const r = latest[h];
-    document.getElementById(badges[h]).textContent = r && r.score != null ? Math.round(r.score) : "–";
-    const chip = document.getElementById(chips[h]);
-    const band = r ? r.band : "unknown";
-    chip.textContent = band;
-    chip.className = `chip ${band}`;
-  });
-
-  document.getElementById("advisory").textContent = ctx.advisory || "No advisory available yet.";
-  lastForecast = ctx.forecast || [];
-  drawForecastChart(lastForecast);
-  loadMlOutlook(id, requestId);
-
-  document.getElementById("btn-voice").onclick = () => playVoice(id);
-  document.getElementById("btn-pdf").onclick = () => window.open(`/api/district/${id}/brief.pdf`, "_blank");
-  document.getElementById("btn-forecast").onclick = () => {
-    document.getElementById("advisory").textContent =
-      (ctx.forecast || []).map((f) => `${f.day}  ${fmt(f.tavg, "°C")}  ${fmt(f.precipitation, "mm")}`).join("\n") ||
-      "No forecast data ingested yet.";
-  };
-  hideMlNote();
-  side.scrollIntoView({ behavior: "smooth" });
-}
-
-/* -------- ML outlook (only shown when the model beat climatology) -------- */
-
-async function loadMlOutlook(id, requestId) {
-  const note = document.getElementById("ml-note");
-  try {
-    const res = await fetch(`/api/district/${id}/ml-outlook`);
-    if (!res.ok) return hideMlNote();
-    const ml = await res.json();
-    if (requestId !== districtRequest) return;
-    if (!ml.available || !ml.rows || !ml.rows.length) return hideMlNote();
-    const v = ml.validation || {};
-    const parts = ml.rows.map((r) => `${r.day.slice(5)}: ${fmt(r.tavg, "°C")}, ${fmt(r.precipitation, "mm")}`);
-    let meta = "";
-    if (v.mae_tavg != null && v.mae_tavg_baseline != null) {
-      meta = ` · beats climatology (MAE ${v.mae_tavg.toFixed(2)}°C vs ${v.mae_tavg_baseline.toFixed(2)}°C)`;
-    }
-    note.textContent = `🤖 ML outlook (experimental):\n${parts.join("\n")}${meta}`;
-    note.style.display = "block";
-    drawForecastChart(lastForecast, ml.rows);
-  } catch {
-    hideMlNote(); // ML is an enhancement, never a dependency
-  }
-}
-
-function hideMlNote() {
-  const note = document.getElementById("ml-note");
-  if (note) {
-    note.style.display = "none";
-    note.textContent = "";
-  }
-}
-
-function fmt(v, unit) {
-  return v == null ? "–" : `${v.toFixed(1)}${unit}`;
-}
-
-async function playVoice(id) {
-  const btn = document.getElementById("btn-voice");
-  btn.textContent = "⏳ generating…";
-  try {
-    const res = await fetch(`/api/district/${id}/voice?lang=${language()}`, { method: "POST" });
-    if (!res.ok) throw new Error("Voice request failed");
-    if (res.headers.get("X-TTS-Engine") === "fallback") {
-      if (!("speechSynthesis" in window)) throw new Error("Speech unavailable");
-      const utterance = new SpeechSynthesisUtterance(document.getElementById("advisory").textContent);
-      utterance.lang = { en: "en-IN", hi: "hi-IN", mr: "mr-IN", ta: "ta-IN", te: "te-IN", kn: "kn-IN", bn: "bn-IN" }[language()];
-      speechSynthesis.cancel();
-      speechSynthesis.speak(utterance);
-      return;
-    }
-    const url = URL.createObjectURL(await res.blob());
-    const audio = new Audio(url);
-    audio.onended = () => URL.revokeObjectURL(url);
-    audio.onerror = () => URL.revokeObjectURL(url);
-    try { await audio.play(); } catch (error) { URL.revokeObjectURL(url); throw error; }
-  } catch {
-    addMsg("Voice unavailable. Please read the advisory text; browser voices depend on your device.", "bot");
-  } finally {
-    btn.textContent = "▶ Voice advisory";
-  }
-}
-
-/* ----------------------------- chart ----------------------------- */
-
-function drawForecastChart(rows, mlRows) {
-  const el = document.getElementById("chart");
-  if (chart) chart.destroy();
-  if (!rows.length || typeof Chart === "undefined") return;
-  const mlByDay = {};
-  (mlRows || []).forEach((r) => (mlByDay[r.day] = r));
-  const datasets = [
-    {
-      label: "Rain mm",
-      data: rows.map((r) => r.precipitation ?? 0),
-      backgroundColor: "#3b82f6",
-      yAxisID: "y1",
-    },
-    {
-      label: "Tavg °C",
-      data: rows.map((r) => r.tavg),
-      type: "line",
-      borderColor: "#f97316",
-      tension: 0.35,
-      yAxisID: "y",
-    },
+function renderMetrics(data) {
+  const population = data.population_in_high_risk_districts;
+  const items = [
+    ["Districts monitored", number(data.districts), `${data.covered} with at least one scored hazard`, "◈", ""],
+    ["High-risk districts", number(data.high), `Selected day · ${data.day}`, "↗", "danger"],
+    ["Registry population · high risk", population >= 1e6 ? (population / 1e6).toFixed(1) + "M" : number(population), "District totals · not exposed-person estimates", "◎", ""],
+    ["Data coverage", data.districts ? Math.round(data.covered / data.districts * 100) + "%" : "—", `${data.unknown} districts without scores`, "⌁", ""],
   ];
-  if (mlRows && mlRows.length) {
-    datasets.push({
-      label: "ML tavg",
-      data: rows.map((r) => (mlByDay[r.day] ? mlByDay[r.day].tavg : null)),
-      type: "line",
-      borderColor: "#a78bfa",
-      borderDash: [6, 4],
-      tension: 0.35,
-      yAxisID: "y",
-    });
-  }
-  chart = new Chart(el, {
-    type: "bar",
-    data: { labels: rows.map((r) => r.day.slice(5)), datasets },
-    options: {
-      responsive: true,
-      scales: {
-        y: { position: "left", ticks: { color: "#8b9bb8" }, grid: { color: "#1f2b47" } },
-        y1: { position: "right", ticks: { color: "#8b9bb8" }, grid: { display: false } },
-        x: { ticks: { color: "#8b9bb8" }, grid: { display: false } },
-      },
-      plugins: { legend: { labels: { color: "#8b9bb8" } } },
-    },
+  $("metrics").replaceChildren(...items.map(([title, value, caption, icon, cls]) => {
+    const article = node("article", "metric " + cls); article.append(node("span", "", title), node("span", "metric-icon", icon), node("strong", "", value), node("small", "", caption)); return article;
+  }));
+  $("map-coverage").textContent = `${data.covered} / ${data.districts} scored`;
+}
+function renderPlot() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg"); svg.setAttribute("viewBox", "0 0 580 360");
+  const make = (tag, attrs) => { const el = document.createElementNS(ns, tag); Object.entries(attrs).forEach(([k,v]) => el.setAttribute(k,v)); return el; };
+  // A geographic coordinate plot, deliberately not a fabricated boundary map.
+  for (let lat = 10; lat <= 35; lat += 5) { const text = make("text", { x: 12, y: 335 - (lat - 7) / 30 * 310, class: "geo-label" }); text.textContent = lat + "°N"; svg.append(text); }
+  const label = make("text", { x: 225, y: 330, class: "geo-label" }); label.textContent = "INDIAN OCEAN"; svg.append(label);
+  const region = make("text", { x: 235, y: 40, class: "geo-label" }); region.textContent = "INDIA · DISTRICT HQs"; svg.append(region);
+  state.districts.forEach(d => {
+    const hazards = riskFor(d.id); const score = state.hazard === "all" ? overall(hazards) : hazards[state.hazard]?.score ?? null;
+    const status = band(score); const x = 70 + (d.lon - 68) / 30 * 455; const y = 325 - (d.lat - 7) / 30 * 295;
+    if (status === "high") svg.append(make("circle", { cx:x, cy:y, r:12, fill:COLORS.high, opacity:.09 }));
+    const circle = make("circle", { cx:x, cy:y, r:score == null ? 3.5 : status === "high" ? 6 : 4.5, fill:COLORS[status], class:"geo-point", tabindex:0, role:"button", "aria-label":`${d.name_en}: ${status}, score ${number(score)}` });
+    const title = make("title", {}); title.textContent = `${d.name_en} · ${d.state}\n${status}: ${number(score)}/100`; circle.append(title);
+    circle.onclick = () => openDistrict(d.id); circle.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDistrict(d.id); } }; svg.append(circle);
+  });
+  $("geo-plot").replaceChildren(svg);
+  if (!state.districts.length) $("geo-plot").append(node("p", "empty", "Registry unavailable. Refresh to retry."));
+}
+function renderWatchlist(rows) {
+  $("watchlist-list").replaceChildren();
+  if (!rows.length) { $("watchlist-list").append(node("p", "empty", "No scored districts in the next 48 hours. Missing data is not a safe signal.")); return; }
+  rows.forEach((r,i) => {
+    const button = node("button", "watch-row"); const name = node("span", "watch-name"); name.append(node("strong", "", r.name_en), node("small", "", r.reason));
+    const score = node("span", "watch-score " + band(r.overall), number(r.overall)); score.append(node("small", "", HAZARDS[r.top_hazard] || "Unknown"));
+    button.append(node("span", "watch-rank", String(i+1).padStart(2,"0")), name, score); button.title = `Peak ${r.peak_day} · ${r.reason}`; button.onclick = () => openDistrict(r.id); $("watchlist-list").append(button);
   });
 }
-
-/* ----------------------------- chat ----------------------------- */
-
-function initChat() {
-  const log = document.getElementById("chat-log");
-  const form = document.getElementById("chat-form");
-  const input = document.getElementById("chat-input");
-  document.getElementById("chat-head").onclick = () => {
-    const body = document.getElementById("chat-body");
-    const hidden = body.style.display === "none";
-    body.style.display = hidden ? "block" : "none";
-    document.getElementById("chat-toggle").textContent = hidden ? "–" : "+";
-  };
-  form.onsubmit = async (e) => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text) return;
-    addMsg(text, "user");
-    input.value = "";
-    const typing = addMsg("…", "bot");
-    try {
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: chatSession, message: text }),
-      });
-      if (!res.ok) throw new Error(res.status);
-      const data = await res.json();
-      typing.textContent = data.reply || "No reply.";
-    } catch {
-      typing.textContent = "Network error — is the API running?";
-    }
-  };
+function scoreChip(score) { const chip = node("span", "score-chip " + band(score)); chip.append(node("span", "", number(score)), node("span", "", band(score) === "unknown" ? "No data" : band(score))); return chip; }
+function renderExplorer() {
+  const search = $("search").value.trim().toLocaleLowerCase();
+  const rows = state.districts.filter(d => Object.values(d).some(v => typeof v === "string" && v.toLocaleLowerCase().includes(search)) && (!$("state-filter").value || d.state === $("state-filter").value) && (!$("band-filter").value || band(overall(riskFor(d.id))) === $("band-filter").value));
+  rows.sort((a,b) => $("sort").value === "name" ? a.name_en.localeCompare(b.name_en) : $("sort").value === "state" ? a.state.localeCompare(b.state) || a.name_en.localeCompare(b.name_en) : (overall(riskFor(b.id)) ?? -1) - (overall(riskFor(a.id)) ?? -1));
+  $("result-count").textContent = `${rows.length} districts · ${state.day}`;
+  $("district-rows").replaceChildren();
+  rows.forEach(d => {
+    const row = node("tr"); const name = node("td"); const open = node("button", "", nameFor(d)); open.onclick = () => openDistrict(d.id); name.append(open, node("small", "", d.state)); row.append(name);
+    Object.keys(HAZARDS).forEach(h => { const cell = node("td"); cell.append(scoreChip(riskFor(d.id)[h]?.score)); row.append(cell); });
+    const all = node("td"); all.append(scoreChip(overall(riskFor(d.id)))); row.append(all);
+    const actions = node("td"); const save = node("button", "table-action" + (state.saved.has(d.id) ? " selected" : ""), state.saved.has(d.id) ? "★" : "☆"); save.setAttribute("aria-label", `${state.saved.has(d.id) ? "Unsave" : "Save"} ${d.name_en}`); save.onclick = () => toggleSaved(d.id);
+    const compare = node("button", "table-action", "⇄"); compare.setAttribute("aria-label", "Compare " + d.name_en); compare.onclick = () => addCompare(d.id);
+    actions.append(save, compare); row.append(actions); $("district-rows").append(row);
+  });
+  if (!rows.length) { const row = node("tr"); const cell = node("td", "empty", "No districts match these filters."); cell.colSpan = 6; row.append(cell); $("district-rows").append(row); }
 }
-
-function addMsg(text, cls) {
-  const log = document.getElementById("chat-log");
-  const div = document.createElement("div");
-  div.className = `msg ${cls}`;
-  div.textContent = text;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
+function toggleSaved(id) {
+  state.saved.has(id) ? state.saved.delete(id) : state.saved.add(id); store.write("saved", [...state.saved]); renderSaved(); renderExplorer(); updateSaveButton();
 }
-
-/* ----------------------------- watchlist ----------------------------- */
-
-const HAZARD_ICON = { heat: "🔥", flood: "🌊", air: "😷" };
-
-async function loadWatchlist() {
-  const list = document.getElementById("watchlist-list");
-  try {
-    const res = await fetch("/api/watchlist?limit=8");
-    if (!res.ok) throw new Error(res.status);
-    const rows = await res.json();
-    list.innerHTML = "";
-    if (!rows.length) {
-      list.innerHTML = '<div class="wl-empty">No risk data ingested yet — run `python -m suraksha ingest`.</div>';
-      return;
-    }
-    rows.forEach((r, i) => {
-      const row = document.createElement("div");
-      row.className = "wl-row";
-      const icon = HAZARD_ICON[r.top_hazard] || "⚠️";
-      row.innerHTML = `
-        <span class="wl-rank">${i + 1}</span>
-        <span class="wl-name"><span class="nm">${icon} ${r.name_en}</span><span class="rs">${r.reason}</span></span>
-        <span class="wl-score ${r.band}">${r.overall == null ? "–" : Math.round(r.overall)}</span>`;
-      row.title = `${r.name_en} (${r.state}) · ${r.reason} · peak ${r.peak_day} — click for full advisory`;
-      row.onclick = () => openDistrict(r.id);
-      list.appendChild(row);
-    });
-  } catch (err) {
-    console.error("watchlist failed", err);
-    list.innerHTML = '<div class="wl-empty">Watchlist unavailable.</div>';
+function updateSaveButton() { $("save-district").textContent = state.saved.has(state.selected) ? "★ Saved" : "☆ Save"; }
+function renderSaved() {
+  const districts = state.districts.filter(d => state.saved.has(d.id)); $("saved-count").textContent = districts.length;
+  $("saved-preview").replaceChildren(); $("saved-grid").replaceChildren();
+  if (!districts.length) {
+    $("saved-preview").append(node("p", "empty", "Keep the places that matter close. Save a district to monitor it here."));
+    $("saved-grid").append(node("p", "empty", "No saved districts yet. Open the district explorer and select ☆."));
   }
+  districts.forEach(d => {
+    const score = overall(riskFor(d.id)); const mini = node("button", "saved-mini", d.name_en); mini.append(node("small", band(score), `${band(score)} · ${number(score)}/100`)); mini.onclick = () => openDistrict(d.id); if ($("saved-preview").children.length < 3) $("saved-preview").append(mini);
+    const card = node("article", "card saved-card"); const head = node("div", "card-heading"); const remove = node("button", "icon-button", "×"); remove.setAttribute("aria-label", "Unsave " + d.name_en); remove.onclick = () => toggleSaved(d.id); head.append(node("h2", "", d.name_en), remove);
+    const open = node("button", "secondary", "Open district ↗"); open.onclick = () => openDistrict(d.id); card.append(head, node("p", "", d.state), scoreChip(score), open); $("saved-grid").append(card);
+  });
 }
-
-function initWatchlist() {
-  document.getElementById("watchlist-head").onclick = () => {
-    const listEl = document.getElementById("watchlist-list");
-    const hidden = listEl.style.display === "none";
-    listEl.style.display = hidden ? "flex" : "none";
-    document.getElementById("wl-toggle").textContent = hidden ? "–" : "+";
-  };
-  loadWatchlist();
+function addCompare(id) {
+  if (!id) return;
+  if (state.compare.includes(id)) { notify("District already in your comparison."); return; }
+  if (state.compare.length >= 4) { notify("Compare up to four districts at a time."); return; }
+  state.compare.push(id); setView("compare"); notify("District added to comparison.");
 }
-
-/* ----------------------------- boot ----------------------------- */
-
-initChat();
-initWatchlist();
-if (typeof maplibregl !== "undefined") initMap();
-else document.getElementById("data-status").textContent = "Map library unavailable; chat and watchlist still work";
-document.getElementById("language").onchange = () => selectedDistrict && openDistrict(selectedDistrict);
-fetch("/api/health").then(r => r.json()).then(h => {
-  if (h.demo) document.getElementById("data-status").textContent = "DEMO · synthetic data, not live warnings";
-}).catch(() => {});
-setInterval(() => { if (map) paintRisks(); loadWatchlist(); }, 60000);
+async function loadCompare() {
+  const ids = [...state.compare]; const token = ids.join(",") + ":" + language();
+  $("compare-chips").replaceChildren(...ids.map(id => { const button = node("button", "", `${state.districts.find(d => d.id === id)?.name_en || id} ×`); button.onclick = () => { state.compare = state.compare.filter(d => d !== id); loadCompare(); }; return button; }));
+  if (ids.length < 2) { $("compare-results").replaceChildren(node("p", "empty", "Choose at least two districts to start comparing.")); return; }
+  $("compare-results").replaceChildren(node("p", "empty", "Loading comparison…"));
+  try {
+    const data = await api(`/api/compare?ids=${encodeURIComponent(ids.join(","))}&lang=${language()}`);
+    if (token !== state.compare.join(",") + ":" + language()) return;
+    $("compare-results").replaceChildren(...data.districts.map(item => {
+      const card = node("article", "compare-item"); card.append(node("h3", "", item.district.name_en), node("p", "", item.district.state));
+      Object.keys(HAZARDS).forEach(h => { const hazard = item.hazards.find(r => r.hazard === h); const row = node("div", "compare-hazard"); row.append(node("span", "", HAZARDS[h]), node("strong", band(hazard?.score), number(hazard?.score))); card.append(row); });
+      card.append(node("p", "", `${item.forecast.length} forecast days · ${item.anomalies.length} anomalies`)); const open = node("button", "text-button", "Open full advisory ↗"); open.onclick = () => openDistrict(item.district.id); card.append(open); return card;
+    }));
+  } catch { if (token === state.compare.join(",") + ":" + language()) $("compare-results").replaceChildren(node("p", "empty", "Comparison unavailable. Please retry.")); }
+}
+async function loadPreparedness() {
+  const generation = ++state.prepGeneration;
+  try {
+    const data = await api(`/api/preparedness?hazard=${$("prep-hazard").value}&band=${$("prep-band").value}&lang=${language()}`);
+    if (generation !== state.prepGeneration) return;
+    $("checklist").replaceChildren(...data.actions.map(action => {
+      const label = node("label"); label.dir = "auto"; const checkbox = node("input"); checkbox.type = "checkbox"; checkbox.checked = !!state.checks[action.id]; checkbox.onchange = () => { state.checks[action.id] = checkbox.checked; store.write("checks", state.checks); updateProgress(); }; label.append(checkbox, node("span", "", action.text)); return label;
+    })); updateProgress();
+  } catch { if (generation === state.prepGeneration) $("checklist").replaceChildren(node("p", "empty", "Checklist unavailable. Please retry.")); }
+}
+function updateProgress() { const inputs = [...$("checklist").querySelectorAll("input")]; $("check-progress").textContent = `${inputs.filter(el => el.checked).length} / ${inputs.length} completed`; }
+function selectTab(tab) {
+  document.querySelectorAll(".drawer-tabs button").forEach(el => { el.classList.toggle("active", el.dataset.tab === tab); el.setAttribute("aria-selected", String(el.dataset.tab === tab)); });
+  document.querySelectorAll(".tab-panel").forEach(el => el.hidden = el.id !== "tab-" + tab);
+  if (tab === "history") loadHistory();
+}
+async function openDistrict(id) {
+  state.selected = id; state.context = null; const generation = ++state.generation;
+  $("district-drawer").hidden = false; $("drawer-backdrop").hidden = false; document.body.style.overflow = "hidden";
+  $("d-name").textContent = "Loading district…"; $("d-sub").textContent = ""; $("advisory").textContent = "Loading grounded guidance…";
+  ["district-badges", "anomalies", "forecast-chart", "forecast-table", "history-chart", "history-table"].forEach(id => $(id).replaceChildren());
+  $("ml-note").hidden = true; selectTab("advisory"); updateSaveButton();
+  const url = new URL(location.href); url.searchParams.set("district", id); history.replaceState(null, "", url);
+  try {
+    const ctx = await api(`/api/district/${encodeURIComponent(id)}?lang=${language()}`);
+    if (generation !== state.generation) return;
+    state.context = ctx; $("d-name").textContent = nameFor(ctx.district); $("d-sub").textContent = `${ctx.district.state} · registry population ${number(ctx.district.population)}`;
+    const risks = ctx.risks[today()] || {};
+    $("district-badges").replaceChildren(...Object.keys(HAZARDS).map(h => { const score = risks[h]?.score; const tile = node("div", "hazard-tile"); tile.append(node("span", "", HAZARDS[h]), node("strong", band(score), number(score)), node("small", band(score), "Today · " + (score == null ? "No data" : band(score)))); return tile; }));
+    $("advisory").textContent = ctx.advisory; $("advisory").dir = language() === "ur" ? "rtl" : "auto";
+    $("translation-note").hidden = !state.languages.find(l => l.code === language())?.experimental;
+    ctx.anomalies.forEach(e => $("anomalies").append(node("div", "anomaly-item", `${e.day} · ${e.message}`)));
+    drawChart("forecast-chart", ctx.forecast, ["tavg", "precipitation"]); renderDataTable("forecast-table", ctx.forecast);
+    loadMl(id, generation); $("close-district").focus();
+  } catch { if (generation === state.generation) { $("d-name").textContent = "District unavailable"; $("advisory").textContent = "Could not load district data. Close this panel and try again."; } }
+}
+function closeDistrict() {
+  if ($("district-drawer").hidden) return;
+  ++state.generation; state.selected = null; state.context = null; $("district-drawer").hidden = true; $("drawer-backdrop").hidden = true; document.body.style.overflow = "";
+  const url = new URL(location.href); url.searchParams.delete("district"); history.replaceState(null, "", url);
+  $("main").focus();
+}
+async function loadHistory() {
+  if (!state.selected) return;
+  const id = state.selected, generation = state.generation, days = $("history-days").value;
+  $("history-table").replaceChildren(node("p", "empty", "Loading history…"));
+  try { const data = await api(`/api/district/${id}/history?days=${days}`); if (generation !== state.generation || days !== $("history-days").value) return; drawChart("history-chart", data.rows, ["tavg", "precipitation"]); renderDataTable("history-table", data.rows); }
+  catch { if (generation === state.generation) $("history-table").replaceChildren(node("p", "empty", "History unavailable. Try another window.")); }
+}
+function renderDataTable(id, rows) {
+  const table = node("table", "data-table"); const head = node("thead"); const tr = node("tr"); ["Day", "Tavg °C", "Tmax °C", "Rain mm", ...(id === "history-table" ? ["Heat /100", "Flood /100", "Air /100"] : [])].forEach(t => tr.append(node("th", "", t))); head.append(tr); table.append(head); const body = node("tbody");
+  rows.forEach(r => { const tr = node("tr"); [r.day, decimal(r.tavg), decimal(r.tmax), decimal(r.precipitation), ...(id === "history-table" ? Object.keys(HAZARDS).map(h => number(r.risks?.[h]?.score)) : [])].forEach(t => tr.append(node("td", "", t))); body.append(tr); }); table.append(body); $(id).replaceChildren(rows.length ? table : node("p", "empty", "No stored data available for this window."));
+}
+function drawChart(id, rows, fields) {
+  const available = rows.filter(r => fields.some(f => r[f] != null)); if (!available.length) { $(id).replaceChildren(node("p", "empty", "No chart data yet.")); return; }
+  const ns = "http://www.w3.org/2000/svg"; const svg = document.createElementNS(ns, "svg"); svg.setAttribute("viewBox", "0 0 460 150"); svg.classList.add("spark-chart"); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", "Temperature and rainfall trend; values in the table below");
+  const colors = ["#5ee5bd", "#73aef5"];
+  fields.forEach((field,index) => {
+    const values = rows.map(r => r[field]).filter(v => v != null); if (!values.length) return;
+    const min = Math.min(...values, 0), max = Math.max(...values, min + 1); let path = "", gap = true;
+    rows.forEach((r,i) => { if (r[field] == null) { gap = true; return; } const x = 20 + i / Math.max(rows.length-1,1) * 420; const y = 125 - (r[field]-min)/(max-min)*100; path += `${gap ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)} `; gap = false; });
+    const line = document.createElementNS(ns,"path"); line.setAttribute("d",path); line.setAttribute("fill","none"); line.setAttribute("stroke",colors[index]); line.setAttribute("stroke-width","2"); svg.append(line);
+  });
+  const legend = node("div", "chart-legend", "Mint: temperature °C · Blue: rain mm · independently scaled; see table for values"); $(id).replaceChildren(svg,legend);
+}
+async function loadMl(id, generation) {
+  try { const ml = await api(`/api/district/${id}/ml-outlook`); if (generation !== state.generation || !ml.available) return; $("ml-note").hidden = false; $("ml-note").textContent = "Experimental ML outlook available. Validation: temperature MAE " + decimal(ml.validation?.mae_tavg) + " vs baseline " + decimal(ml.validation?.mae_tavg_baseline) + "; rain MAE " + decimal(ml.validation?.mae_rain) + " vs baseline " + decimal(ml.validation?.mae_rain_baseline) + "."; } catch { /* optional model */ }
+}
+async function copy(text) { try { await navigator.clipboard.writeText(text); notify("Copied to clipboard."); } catch { notify("Clipboard unavailable. Select and copy the text manually."); } }
+async function listen() {
+  if (!state.context) return;
+  const text = state.context.advisory; $("voice").disabled = true;
+  try {
+    const controller = new AbortController(); const timer = setTimeout(() => controller.abort(),22000); let res;
+    try { res = await fetch(`/api/district/${state.selected}/voice?lang=${language()}`, {method:"POST",signal:controller.signal}); } finally {clearTimeout(timer);}
+    if (!res.ok) throw new Error("Voice unavailable");
+    if (res.headers.get("X-TTS-Engine") === "fallback") {
+      if (!("speechSynthesis" in globalThis)) throw new Error("No browser voice");
+      const utterance = new SpeechSynthesisUtterance(text); utterance.lang = state.languages.find(l => l.code === language())?.locale || "en-IN"; utterance.onerror = () => notify("Device speech unavailable. Read the advisory text."); speechSynthesis.cancel(); speechSynthesis.speak(utterance); notify("Using device speech; language availability depends on your device.");
+    } else { const url = URL.createObjectURL(await res.blob()); const audio = new Audio(url); audio.onended = audio.onerror = () => URL.revokeObjectURL(url); try { await audio.play(); } catch(e) { URL.revokeObjectURL(url); throw e; } }
+  } catch { notify("Voice unavailable. The complete text advisory is still available."); }
+  finally { $("voice").disabled = false; }
+}
+function openChat() { $("chat-panel").hidden = false; $("chat-input").focus(); }
+function message(text, type) { const msg = node("div", "msg " + type, text); msg.dir = "auto"; $("chat-log").append(msg); $("chat-log").scrollTop = $("chat-log").scrollHeight; return msg; }
+async function sendChat(text) {
+  if (state.chatBusy || !text.trim()) return; state.chatBusy = true; $("chat-send").disabled = true; message(text,"user"); const pending = message("Thinking with district data…","bot");
+  try { const response = await api("/api/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:state.session,message:text,language:language()})}); pending.textContent = response.reply; }
+  catch { pending.textContent = "Connection unavailable. Please retry. Your district advisory is also available in the explorer."; }
+  finally { state.chatBusy = false; $("chat-send").disabled = false; $("chat-log").scrollTop = $("chat-log").scrollHeight; }
+}
+async function locate() {
+  if (!navigator.geolocation) { notify("Your browser does not support location lookup."); return; }
+  $("locate").disabled = true;
+  navigator.geolocation.getCurrentPosition(async position => {
+    try { const d = await api(`/api/nearest?lat=${position.coords.latitude}&lon=${position.coords.longitude}`); openDistrict(d.id); notify(`Nearest curated HQ: ${d.name_en}, ${d.distance_km} km away. Not a boundary lookup.`); }
+    catch { notify("Location lookup unavailable. Search your district instead."); } finally { $("locate").disabled = false; }
+  }, () => { $("locate").disabled = false; notify("Location permission denied or unavailable. Search your district instead."); }, {timeout:10000,maximumAge:300000});
+}
+function bind() {
+  document.querySelectorAll("[data-view]").forEach(el => el.onclick = () => setView(el.dataset.view));
+  $("refresh").onclick = refresh; $("explore-all").onclick = () => setView("explore"); $("saved-all").onclick = () => setView("saved");
+  ["search","state-filter","band-filter","sort"].forEach(id => $(id).addEventListener(id === "search" ? "input" : "change",renderExplorer));
+  document.querySelectorAll("[data-hazard]").forEach(el => el.onclick = () => { state.hazard = el.dataset.hazard; document.querySelectorAll("[data-hazard]").forEach(b => b.classList.toggle("active",b===el)); renderPlot(); refresh(); });
+  $("risk-day").onchange = () => { state.day = $("risk-day").value; refresh(); };
+  $("language").onchange = () => { store.write("language",language()); renderExplorer(); if(state.selected) openDistrict(state.selected); if(state.view === "preparedness") loadPreparedness(); if(state.view === "compare") loadCompare(); };
+  $("compare-add").onclick = () => addCompare($("compare-picker").value); $("compare-clear").onclick = () => {state.compare=[];loadCompare();};
+  $("prep-hazard").onchange = $("prep-band").onchange = loadPreparedness; $("reset-checklist").onclick = () => {state.checks={};store.write("checks",{});loadPreparedness();};
+  $("save-district").onclick = () => state.selected && toggleSaved(state.selected); $("compare-district").onclick = () => {const id=state.selected;closeDistrict();addCompare(id);};
+  $("share-district").onclick = async () => {if(navigator.share) {try {await navigator.share({title:"Suraksha district intelligence",url:location.href});} catch { /* dismissed */ }} else copy(location.href);};
+  $("copy-advisory").onclick = () => state.context && copy(state.context.advisory);
+  $("close-district").onclick = $("drawer-backdrop").onclick = closeDistrict;
+  document.querySelectorAll("[data-tab]").forEach(el => el.onclick = () => selectTab(el.dataset.tab)); $("history-days").onchange = loadHistory;
+  $("voice").onclick = listen; $("pdf").onclick = () => state.selected && window.open(`/api/district/${state.selected}/brief.pdf`,"_blank","noopener"); $("csv").onclick = () => state.selected && window.open(`/api/district/${state.selected}/export.csv?days=${$("history-days").value}`,"_blank","noopener");
+  $("open-chat").onclick = $("hero-chat").onclick = openChat; $("close-chat").onclick = () => $("chat-panel").hidden = true;
+  $("chat-form").onsubmit = e => {e.preventDefault();const text=$("chat-input").value;$("chat-input").value="";sendChat(text);};
+  document.querySelectorAll("[data-prompt]").forEach(el => el.onclick = () => { const district = state.districts.find(d => d.id === state.selected) || state.districts.find(d => state.saved.has(d.id)); if (!district) {notify("Name a district in chat, or save one first.");return;} sendChat(`${district.name_en} ${el.dataset.prompt}`); });
+  $("locate").onclick = locate;
+  ["about-button","footer-about"].forEach(id => $(id).onclick = () => $("about-dialog").showModal()); $("close-about").onclick = () => $("about-dialog").close();
+  document.addEventListener("keydown", e => {
+    if(e.key === "Escape") {closeDistrict();$("chat-panel").hidden=true;}
+    if (e.key === "Tab" && !$("district-drawer").hidden && $("chat-panel").hidden && !$("about-dialog").open) {
+      const focusable = [...$("district-drawer").querySelectorAll("button:not(:disabled), select")].filter(el => el.offsetParent !== null);
+      if (focusable.length && e.shiftKey && (document.activeElement === focusable[0] || !$("district-drawer").contains(document.activeElement))) {e.preventDefault();focusable.at(-1).focus();}
+      else if (focusable.length && !e.shiftKey && document.activeElement === focusable.at(-1)) {e.preventDefault();focusable[0].focus();}
+    }
+    if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
+    const views={1:"overview",2:"explore",3:"compare",4:"preparedness"}; if(views[e.key]) setView(views[e.key]);
+  });
+  window.addEventListener("offline",() => {$("connection").lastChild.textContent=" Offline";notify("You’re offline. Previously loaded results may be stale.");});
+  window.addEventListener("online",refresh);
+}
+async function boot() {
+  state.day = today(); for(let offset=0;offset<7;offset++){const option=node("option","",offset===0?"Today":dateOffset(offset).slice(5));option.value=dateOffset(offset);$("risk-day").append(option);}
+  $("date-label").textContent = new Intl.DateTimeFormat("en-IN",{dateStyle:"medium",timeZone:"Asia/Kolkata"}).format(new Date()) + " · IST";
+  bind(); message("Welcome to Suraksha. Ask about a district’s climate risks, forecasts or unusual weather. Try ‘Pune advisory’. No paid AI key required.","bot");
+  const [districts,languages] = await Promise.allSettled([api("/api/districts"),api("/api/languages")]);
+  if(districts.status === "fulfilled") {state.districts=districts.value;populateRegistry();} else notify("District registry could not load. Reload the page to retry.");
+  if(languages.status === "fulfilled") {state.languages=languages.value;$("language").replaceChildren(...state.languages.map(l=>{const option=node("option","",l.name);option.value=l.code;return option;}));const saved=store.read("language","en");if(state.languages.some(l=>l.code===saved))$("language").value=saved;}
+  await refresh(); const id=new URL(location.href).searchParams.get("district");if(id&&state.districts.some(d=>d.id===id))openDistrict(id);
+  setInterval(()=>{if(!document.hidden)refresh();},60000);
+}
+boot().catch(()=>{$("error-banner").hidden=false;$("error-banner").textContent="Workspace could not initialize. Reload to retry.";});

@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from suraksha.agent import brain
-from suraksha.agent.i18n import detect_language
+from suraksha.agent.i18n import LANGUAGES, detect_language
 from suraksha.agent.tools import advisory_text, district_context, find_district, forecast_text, watchlist
 from suraksha.config import get_settings
 from suraksha.data.pipeline import run_pipeline
@@ -56,10 +56,14 @@ async def lifespan(_: FastAPI):
                 await task
             except asyncio.CancelledError:
                 pass
+            except Exception:
+                logger.exception("Startup ingestion failed")
         stop_scheduler()
 
 
-app = FastAPI(title="Suraksha API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Suraksha API", version="0.2.0", lifespan=lifespan)
+from suraksha.server.insights import router as insights_router
+app.include_router(insights_router)
 
 
 def require_admin(request: Request) -> None:
@@ -90,6 +94,11 @@ def app_js() -> FileResponse:
     return FileResponse(WEB_DIR / "app.js")
 
 
+@app.get("/styles.css")
+def stylesheet() -> FileResponse:
+    return FileResponse(WEB_DIR / "styles.css", media_type="text/css")
+
+
 @app.get("/blocked.html")
 def blocked_page() -> FileResponse:
     return FileResponse(WEB_DIR / "blocked.html")
@@ -99,7 +108,9 @@ def blocked_page() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "time": date.today().isoformat(), "demo": get_settings().demo_mode}
+    from suraksha.data.pipeline import pipeline_status
+    return {"status": "ok", "time": date.today().isoformat(), "demo": get_settings().demo_mode,
+            "pipeline": pipeline_status()}
 
 
 @app.get("/api/districts")
@@ -256,6 +267,7 @@ async def district_voice(district_id: str, lang: str = "hi") -> Response:
 class ChatInput(BaseModel):
     session_id: str = Field(default="web", min_length=1, max_length=128)
     message: str = Field(max_length=4000)
+    language: str | None = None
 
 
 @app.post("/api/chat")
@@ -264,7 +276,9 @@ async def chat(body: ChatInput) -> dict:
     message = body.message
     if not message.strip():
         raise HTTPException(400, "message required")
-    reply = await brain.handle_message(session_id, message)
+    if body.language is not None and body.language not in LANGUAGES:
+        raise HTTPException(422, "Unsupported language")
+    reply = await brain.handle_message(session_id, message, body.language)
     return {"reply": reply}
 
 

@@ -9,6 +9,7 @@ from datetime import date
 from suraksha.agent import llm
 from suraksha.agent.i18n import (
     detect_language,
+    LANGUAGES,
     format_advisory,
     format_forecast,
     ask_which_district,
@@ -28,7 +29,7 @@ INTENTS = ("advisory", "forecast", "anomaly")
 _SYSTEM = """You are Suraksha, a friendly climate early-warning assistant on WhatsApp for India.
 Rules:
 1. Ground every number in the CONTEXT provided. Never invent numbers.
-2. Reply in the user's language (en/hi/mr/ta/te/kn/bn). Keep it under 120 words, WhatsApp style.
+2. Reply in the user's language (en/hi/mr/ta/te/kn/bn/gu/pa/ml/ur). Keep it under 120 words, WhatsApp style.
 3. If the user's district is unclear, ask which district they mean.
 4. Include relevant safety actions when risk is moderate or high."""
 
@@ -68,10 +69,10 @@ def _set_session(session_id: str, language: str | None = None, district_id: str 
         db.commit()
 
 
-async def handle_message(session_id: str, text: str) -> str:
+async def handle_message(session_id: str, text: str, language: str | None = None) -> str:
     """Main entry point used by both the WhatsApp webhook and the web chat API."""
     text = (text or "").strip()
-    lang = detect_language(text, default=_get_session(session_id).language or "en")
+    lang = language if language in LANGUAGES else detect_language(text, default=_get_session(session_id).language or "en")
     _set_session(session_id, language=lang)
 
     # Subscription commands take priority over advisory flows.

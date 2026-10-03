@@ -1,5 +1,29 @@
 # Hackathon audit — 2026-10-03
 
+## Command-center expansion (v0.2)
+
+- Replaced overlapping panels with a responsive premium dark workspace,
+  operational metrics, explorer, saved districts, comparisons, preparedness,
+  detail drawer and grounded assistant.
+- Local SVG HQ risk plot and trend charts replace CDN libraries. No external
+  frontend assets are required. The plot is not an administrative boundary map.
+- Added `/api/overview`, `/api/languages`, `/api/nearest`, `/api/compare`,
+  `/api/preparedness`, district history and CSV export routes with bounded inputs.
+- Added hazard/date filters, district search, state/severity/sort controls,
+  device-local saved districts/checklist progress, share links and nearest-HQ
+  lookup. Location access is requested only by clicking Near me.
+- Added Gujarati, Punjabi, Malayalam and Urdu templates/actions, script detection,
+  selected district aliases, explicit chat-language selection, speech settings
+  and RTL advisory rendering. All new translations remain experimental.
+- Added single-process ingestion overlap protection and pipeline status reporting.
+  Multi-worker/distributed locking remains unimplemented.
+- Added defensive requests, timeouts, stale-response guards, local-storage schema
+  checks, empty/error states, focus indicators and reduced-motion styling.
+- Verification: 126 Python tests passed, 2 intentionally skipped; 7 dependency-free
+  Node frontend interaction tests passed. No browser screenshot/visual verification
+  was possible in this environment. Node tests simulate DOM behavior, not a browser.
+
+
 ## Completed and covered by offline tests
 
 - Deterministic heat/rainfall-proxy/air scoring, climatology, anomalies,
@@ -57,8 +81,9 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
    Incoming voice is not transcribed. A missing TTS service can return a flagged
    placeholder WAV from the API; dashboard never plays it as a spoken advisory.
    Browser fallback language availability depends on installed device voices.
-5. Map uses district HQ points, not boundary polygons/base-map geography. CDN
-   assets are not bundled; fully offline map/chart rendering is not guaranteed.
+5. Geographic plot uses district HQ points, not boundary polygons/base-map
+   geography. Plot/chart rendering now uses local SVG with no CDN. Trend series
+   are independently scaled and explicitly labelled; consult tables for values.
    No automated browser visual tests ran (Chrome unavailable).
 6. First ingestion stores only a short recent history; ML normally stays withheld
    until sufficient observations accumulate. Backfill is not implemented. A
@@ -70,7 +95,7 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
    Flood is a rainfall proxy, not a hydrological forecast. No official alert
    authority or validated emergency-service product is claimed.
 8. Remaining production work: global IST date handling, authentication for
-   public chat identities, quotas/rate limits, pipeline overlap locking,
+   public chat identities, quotas/rate limits, distributed pipeline locking,
    persistent audit retention, dependency locking/security scanning and full
    privacy deletion. Admin key/local restriction is not a complete auth system.
 9. Registry covers 42 curated districts, not 700+. Historical roadmap items such

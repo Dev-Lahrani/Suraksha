@@ -3,122 +3,56 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Suraksha — Climate Early Warning for India</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>" />
-  <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
-  <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-  <style>
-    :root {
-      --bg: #0b1220; --panel: #111a2e; --border: #1f2b47; --text: #e6edf7;
-      --muted: #8b9bb8; --teal: #14b8a6; --low: #22c55e; --mod: #eab308; --high: #ef4444;
-    }
-    * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); }
-    #map { position: absolute; inset: 0; }
-    .panel { position: absolute; background: rgba(17, 26, 46, .96); border: 1px solid var(--border); border-radius: 14px; backdrop-filter: blur(6px); }
-    header#topbar { position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; gap: 10px; align-items: center; padding: 10px 14px; }
-    header#topbar h1 { font-size: 16px; margin: 0; letter-spacing: .4px; }
-    header#topbar .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 3px 8px; border-radius: 999px; }
-    select { max-width: 170px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 5px; }
-    header#topbar { flex-wrap: wrap; max-width: calc(100% - 24px); }
-    #legend { left: 12px; bottom: 12px; z-index: 5; padding: 10px 12px; font-size: 12px; display: flex; gap: 12px; align-items: center; }
-    .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 6px; }
-    #side { top: 68px; right: 12px; width: 380px; max-height: calc(100% - 90px); overflow: auto; z-index: 6; padding: 16px; display: none; }
-    #side h2 { margin: 0 0 2px; font-size: 20px; }
-    #side .sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
-    .badges { display: flex; gap: 8px; margin: 10px 0; }
-    .badge { flex: 1; text-align: center; padding: 8px 6px; border-radius: 10px; background: var(--bg); border: 1px solid var(--border); }
-    .badge .b-val { font-size: 20px; font-weight: 700; }
-    .badge .b-lab { font-size: 11px; color: var(--muted); }
-    .chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; margin-left: 6px; }
-    .chip.low { background: #14351f; color: #4ade80; } .chip.moderate { background: #3a2f10; color: #facc15; }
-    .chip.high { background: #3b1516; color: #f87171; } .chip.unknown { background: #1c2540; color: var(--muted); }
-    .btns { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
-    button { background: var(--teal); border: none; color: #04211f; font-weight: 700; padding: 8px 12px; border-radius: 9px; cursor: pointer; font-size: 12px; }
-    button.ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
-    #advisory { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: 13px; white-space: pre-wrap; line-height: 1.45; }
-    .ml-note { margin-top: 8px; background: #171230; border: 1px dashed #6d28d9; color: #c4b5fd; border-radius: 10px; padding: 8px 10px; font-size: 12px; white-space: pre-wrap; line-height: 1.45; }
-    #chat { right: 12px; bottom: 12px; width: 340px; z-index: 7; overflow: hidden; }
-    #chat-head { padding: 10px 14px; font-weight: 700; cursor: pointer; display: flex; justify-content: space-between; align-items: center; }
-    #chat-body { padding: 0 12px 12px; }
-    #chat-log { max-height: 240px; overflow: auto; display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-    .msg { padding: 8px 10px; border-radius: 10px; font-size: 13px; line-height: 1.4; max-width: 90%; white-space: pre-wrap; }
-    .msg.user { align-self: flex-end; background: var(--teal); color: #04211f; }
-    .msg.bot { align-self: flex-start; background: var(--bg); border: 1px solid var(--border); }
-    #chat-form { display: flex; gap: 6px; }
-    #chat-input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 9px; padding: 8px 10px; font-size: 13px; }
-    .spinner { font-size: 12px; color: var(--muted); }
-    #watchlist { top: 68px; left: 12px; width: 300px; z-index: 5; padding: 12px 14px; }
-    #watchlist-head { display: flex; justify-content: space-between; align-items: center; cursor: pointer; font-weight: 700; font-size: 14px; }
-    #watchlist-head .wl-toggle { color: var(--muted); font-weight: 400; }
-    #watchlist-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-    .wl-row { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 9px; background: var(--bg); border: 1px solid var(--border); cursor: pointer; font-size: 12.5px; }
-    .wl-row:hover { border-color: var(--teal); }
-    .wl-rank { color: var(--muted); font-size: 11px; width: 16px; }
-    .wl-name { flex: 1; min-width: 0; }
-    .wl-name .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .wl-name .rs { color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
-    .wl-score { font-weight: 700; font-size: 14px; }
-    .wl-score.high { color: var(--high); } .wl-score.moderate { color: var(--mod); } .wl-score.low { color: var(--low); }
-    #watchlist .wl-empty { color: var(--muted); font-size: 12px; margin-top: 8px; }
-    @media (max-width: 720px) { #side { width: calc(100% - 24px); } #chat { width: calc(100% - 24px); } #watchlist { width: calc(100% - 24px); } }
-  </style>
+  <meta name="theme-color" content="#0b1118" />
+  <meta name="description" content="Suraksha climate intelligence: explainable district risks, multilingual guidance and preparedness." />
+  <title>Suraksha — Climate Intelligence</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%235ee5bd'/%3E%3Cpath d='M20 7l11 5v8c0 7-11 13-11 13S9 27 9 20v-8z' fill='%230b1118'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <div id="map"></div>
-
-  <header id="topbar" class="panel">
-    <h1>🛡️ Suraksha</h1>
-    <span class="tag">AI for Climate Action · SDG 13</span>
-    <span class="tag" id="count-tag">— districts</span>
-    <select id="district-picker" aria-label="Choose district"><option value="">Choose district</option></select>
-    <select id="language" aria-label="Advisory language"><option value="en">English</option><option value="hi">हिन्दी</option><option value="mr">मराठी</option><option value="ta">தமிழ்</option><option value="te">తెలుగు</option><option value="kn">ಕನ್ನಡ</option><option value="bn">বাংলা</option></select>
-    <span class="tag" id="data-status">Live data · rainfall-based flood proxy</span>
-  </header>
-
-  <div id="legend" class="panel">
-    <span><span class="dot" style="background:var(--high)"></span>High ≥ 60</span>
-    <span><span class="dot" style="background:var(--mod)"></span>Moderate 25–59</span>
-    <span><span class="dot" style="background:var(--low)"></span>Low &lt; 25</span>
-    <span><span class="dot" style="background:#64748b"></span>No data ≠ safe</span>
-  </div>
-
-  <section id="watchlist" class="panel">
-    <div id="watchlist-head"><span>🚨 Watchlist — highest risk now</span><span class="wl-toggle" id="wl-toggle">–</span></div>
-    <div id="watchlist-list"><div class="wl-empty">Loading…</div></div>
-  </section>
-
-  <aside id="side" class="panel">
-    <button class="ghost" style="float:right" onclick="document.getElementById('side').style.display='none'" aria-label="Close district">×</button>
-    <h2 id="d-name">—</h2>
-    <div class="sub" id="d-sub">—</div>
-    <div class="badges">
-      <div class="badge"><div class="b-val" id="b-heat">–</div><div class="b-lab">🔥 Heat</div><span class="chip unknown" id="c-heat">—</span></div>
-      <div class="badge"><div class="b-val" id="b-flood">–</div><div class="b-lab">🌊 Flood</div><span class="chip unknown" id="c-flood">—</span></div>
-      <div class="badge"><div class="b-val" id="b-air">–</div><div class="b-lab">😷 Air</div><span class="chip unknown" id="c-air">—</span></div>
-    </div>
-    <div class="btns">
-      <button id="btn-voice">▶ Voice advisory</button>
-      <button id="btn-pdf" class="ghost">⬇ PDF brief</button>
-      <button id="btn-forecast" class="ghost">🗓️ 7-day</button>
-    </div>
-    <div id="advisory">Loading…</div>
-    <div id="ml-note" class="ml-note" style="display:none"></div>
-    <div style="margin-top:10px"><canvas id="chart" height="180"></canvas></div>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="Suraksha home"><span class="brand-mark">S</span><span>suraksha<span class="brand-sub">CLIMATE INTELLIGENCE</span></span></a>
+    <div class="workspace"><span class="workspace-icon">IN</span><div>India workspace<small>Multi-hazard monitoring</small></div><span class="live-dot"></span></div>
+    <p class="nav-caption">WORKSPACE</p>
+    <nav aria-label="Main navigation">
+      <button class="nav-item active" data-view="overview"><span>◈</span> Overview <kbd>1</kbd></button>
+      <button class="nav-item" data-view="explore"><span>⌕</span> District explorer <kbd>2</kbd></button>
+      <button class="nav-item" data-view="saved"><span>☆</span> Saved districts <span id="saved-count" class="nav-count">0</span></button>
+      <button class="nav-item" data-view="compare"><span>⇄</span> Compare districts <kbd>3</kbd></button>
+      <button class="nav-item" data-view="preparedness"><span>☑</span> Preparedness <kbd>4</kbd></button>
+    </nav>
+    <div class="sidebar-bottom"><div class="mission"><span class="eyebrow">BUILT FOR RESILIENCE</span><strong>Early insight.<br>Better decisions.</strong><p>Open data. Explainable risks.<br>Action in your language.</p><span class="mission-tag">SDG 13 · Climate Action</span></div><button id="about-button" class="nav-item"><span>ⓘ</span> Sources & limitations</button><div class="profile"><span class="avatar">SK</span><div>Suraksha workspace<small>Hackathon edition · v0.2</small></div></div></div>
   </aside>
 
-  <section id="chat" class="panel">
-    <div id="chat-head"><span>💬 Ask Suraksha</span><span id="chat-toggle">–</span></div>
-    <div id="chat-body">
-      <div id="chat-log"></div>
-      <form id="chat-form">
-        <input id="chat-input" placeholder="Try: नागपुर में बाढ़ का खतरा?" autocomplete="off" />
-        <button type="submit">➤</button>
-      </form>
-    </div>
-  </section>
+  <div class="app-shell">
+    <header class="topbar"><div class="breadcrumb">Workspace <span>/</span> <strong id="view-title">Overview</strong></div><div class="top-actions"><span id="connection" class="connection"><i class="live-dot"></i> Connecting</span><label class="language-label"><span class="sr-only">Advisory language</span><select id="language"><option value="en">English</option></select></label><button id="refresh" class="icon-button" aria-label="Refresh data">↻</button><button id="open-chat" class="primary small">✧ Ask Suraksha</button></div></header>
+    <main id="main" tabindex="-1">
+      <div id="mode-banner" class="mode-banner" hidden>DEMO WORKSPACE · Synthetic data for demonstration. Not live emergency warnings.</div>
+      <div id="error-banner" class="error-banner" role="alert" hidden></div>
+      <section class="page-heading"><div><span class="eyebrow">YOUR EARLY-WARNING WORKSPACE</span><h1 id="page-title">A clearer view of climate risk<span class="mint">.</span></h1><p id="page-subtitle">Monitor the signals. Understand the impact. Stay one step ahead.</p></div><div class="heading-actions"><span id="date-label" class="date-label"></span><button id="locate" class="secondary">⌖ Near me</button></div></section>
 
-  <script src="/app.js"></script>
+      <section id="view-overview" class="view">
+        <div class="metric-grid" id="metrics"><article class="metric"><span>Districts monitored</span><strong>—</strong><small>Loading coverage</small></article></div>
+        <div class="overview-grid"><section class="card geography"><div class="card-heading"><div><span class="eyebrow">GEOGRAPHIC INTELLIGENCE</span><h2>Risk landscape</h2></div><span class="pill" id="map-coverage">District HQs</span></div><div class="map-toolbar"><div class="segmented" id="hazard-tabs" aria-label="Hazard filter"><button class="active" data-hazard="all">All risks</button><button data-hazard="heat">Heat</button><button data-hazard="flood">Flood proxy</button><button data-hazard="air">Air</button></div><label class="date-control">Day <select id="risk-day" aria-label="Risk date"></select></label></div><div id="geo-plot" class="geo-plot" aria-label="District headquarters risk plot"></div><div class="map-footer"><div class="legend"><span><i class="dot high"></i>High</span><span><i class="dot moderate"></i>Moderate</span><span><i class="dot low"></i>Low</span><span><i class="dot unknown"></i>No data</span></div><span>HQ coordinates · not district boundaries</span></div></section>
+        <section class="card priority"><div class="card-heading"><div><span class="eyebrow">NEXT 48 HOURS</span><h2>Priority watchlist</h2></div><span class="live-dot"></span></div><p class="card-subtitle">Peak hazard scores. Every signal explained.</p><div id="watchlist-list" class="watchlist-list"><p class="empty">Loading district signals…</p></div><button id="explore-all" class="text-button">Explore all districts <span>↗</span></button></section></div>
+        <div class="bottom-grid"><section class="card"><div class="card-heading"><div><span class="eyebrow">PERSONAL WORKSPACE</span><h2>Your saved districts</h2></div><button id="saved-all" class="text-button">View all →</button></div><div id="saved-preview" class="saved-preview"></div></section><section class="card signal-card"><div class="signal-orb">✧</div><div><span class="eyebrow">GROUNDED, MULTILINGUAL GUIDANCE</span><h2>From a signal to a next step.</h2><p>Ask about local risks, hear an advisory, or create a district brief. No paid AI key required.</p><button id="hero-chat" class="secondary">Talk to Suraksha ↗</button></div></section></div>
+      </section>
+
+      <section id="view-explore" class="view" hidden><div class="card"><div class="explorer-toolbar"><label class="search-field"><span>⌕</span><input id="search" type="search" placeholder="Search district, state or local name…" aria-label="Search districts" /></label><select id="state-filter" aria-label="Filter by state"><option value="">All states</option></select><select id="band-filter" aria-label="Filter risk level"><option value="">All risk levels</option><option value="high">High</option><option value="moderate">Moderate</option><option value="low">Low</option><option value="unknown">No data</option></select><select id="sort" aria-label="Sort districts"><option value="risk">Highest risk</option><option value="name">District A–Z</option><option value="state">State A–Z</option></select></div><div class="table-summary"><span id="result-count"></span><span>Scores for selected day · missing data ≠ safe</span></div><div class="table-scroll"><table class="district-table"><thead><tr><th>District</th><th>Heat</th><th>Flood proxy</th><th>Air quality</th><th>Overall</th><th>Actions</th></tr></thead><tbody id="district-rows"></tbody></table></div></div></section>
+      <section id="view-saved" class="view" hidden><div id="saved-grid" class="saved-grid"></div></section>
+      <section id="view-compare" class="view" hidden><section class="card"><div class="card-heading"><div><span class="eyebrow">SIDE-BY-SIDE INTELLIGENCE</span><h2>Compare your districts</h2></div><span class="pill">2–4 districts</span></div><p class="card-subtitle">Compare peak advisory-window risks and forecast availability. Add districts from the explorer.</p><div class="compare-toolbar"><select id="compare-picker" aria-label="Add comparison district"><option value="">Add a district…</option></select><button id="compare-add" class="secondary">+ Add district</button><button id="compare-clear" class="text-button">Clear selection</button></div><div id="compare-chips" class="compare-chips"></div><div id="compare-results" class="compare-grid"><p class="empty">Choose at least two districts to start comparing.</p></div></section></section>
+      <section id="view-preparedness" class="view" hidden><div class="preparedness-grid"><section class="card"><div class="card-heading"><div><span class="eyebrow">TURN INSIGHT INTO ACTION</span><h2>Your preparedness checklist</h2></div><span id="check-progress" class="pill">0 completed</span></div><p class="card-subtitle">Progress stays on this device. This is guidance, not an evacuation order.</p><div class="compare-toolbar"><select id="prep-hazard" aria-label="Preparedness hazard"><option value="heat">Heat safety</option><option value="flood">Flood preparedness</option><option value="air">Air-quality safety</option></select><select id="prep-band" aria-label="Preparedness severity"><option value="high">High risk</option><option value="moderate">Moderate risk</option><option value="low">Low risk</option></select></div><div id="checklist" class="checklist"></div><button id="reset-checklist" class="text-button">Reset checklist progress</button></section><section class="card emergency-card"><span class="eyebrow">WHEN IT MATTERS MOST</span><h2>Follow official guidance.</h2><p>Suraksha explains model-based risks. Local authorities determine evacuation routes, shelter availability and emergency actions.</p><a href="tel:112" class="emergency-number">112 <span>India emergency assistance ↗</span></a><p class="fine-print">For an immediate emergency, contact local emergency services. Do not wait for this dashboard.</p></section></div></section>
+      <footer class="footer"><span><i class="live-dot"></i> Open data. Transparent intelligence.</span><span>Open-Meteo · CAMS · US-EPA · NDMA-inspired guidance</span><button id="footer-about" class="text-button">Know the limitations ↗</button></footer>
+    </main>
+  </div>
+
+  <div id="drawer-backdrop" class="backdrop" hidden></div>
+  <aside id="district-drawer" class="drawer" aria-label="District details" hidden><div class="drawer-top"><span class="eyebrow">DISTRICT INTELLIGENCE</span><button id="close-district" class="icon-button" aria-label="Close district details">×</button></div><h2 id="d-name">Loading…</h2><p id="d-sub" class="muted"></p><div class="drawer-actions"><button id="save-district" class="secondary">☆ Save</button><button id="share-district" class="secondary">↗ Share</button><button id="compare-district" class="secondary">⇄ Compare</button></div><div id="district-badges" class="hazard-grid"></div><div class="drawer-tabs" role="tablist"><button class="active" data-tab="advisory" role="tab" aria-selected="true">Advisory</button><button data-tab="forecast" role="tab" aria-selected="false">Forecast</button><button data-tab="history" role="tab" aria-selected="false">History</button></div><div id="tab-advisory" class="tab-panel"><div id="translation-note" class="translation-note" hidden>Experimental translation · safety review pending</div><pre id="advisory" dir="auto">Loading advisory…</pre><div id="anomalies"></div></div><div id="tab-forecast" class="tab-panel" hidden><div id="forecast-chart"></div><div id="forecast-table" class="table-scroll"></div><div id="ml-note" class="translation-note" hidden></div></div><div id="tab-history" class="tab-panel" hidden><label class="history-control">History window <select id="history-days"><option value="7">7 days</option><option value="30" selected>30 days</option><option value="90">90 days</option></select></label><div id="history-chart"></div><div id="history-table" class="table-scroll"></div></div><div class="drawer-downloads"><button id="voice" class="primary">▶ Listen</button><button id="pdf" class="secondary">↓ PDF brief</button><button id="csv" class="secondary">↓ CSV data</button><button id="copy-advisory" class="secondary">Copy text</button></div><p class="fine-print">Flood is a rainfall-based proxy, not a hydrological model. Unknown hazards are not safe hazards.</p></aside>
+
+  <section id="chat-panel" class="chat-panel" aria-label="Suraksha chat" hidden><header class="chat-header"><span class="chat-avatar">✧</span><div><strong>Ask Suraksha</strong><small>Grounded guidance · your language</small></div><button id="close-chat" class="icon-button" aria-label="Close chat">×</button></header><div id="chat-log" class="chat-log" aria-live="polite"></div><div class="quick-prompts"><button data-prompt="advisory">Local advisory</button><button data-prompt="forecast">7-day forecast</button><button data-prompt="anomaly">Unusual weather</button></div><form id="chat-form"><label class="sr-only" for="chat-input">Your message</label><input id="chat-input" placeholder="Ask about a district…" maxlength="4000" autocomplete="off" required /><button id="chat-send" class="primary" aria-label="Send message">↑</button></form><p class="chat-disclaimer">Deterministic risk data. Not an official emergency service.</p></section>
+  <dialog id="about-dialog"><div class="card-heading"><h2>Transparent by design.</h2><button id="close-about" class="icon-button" aria-label="Close sources">×</button></div><p>Weather and ERA5 climatology: Open-Meteo. Air-quality model: CAMS via Open-Meteo. AQI mapping: US-EPA. Safety actions: NDMA/WHO-inspired playbooks.</p><ul><li>District dots are curated HQ locations—not district boundaries.</li><li>Flood scores are rainfall proxies; air readings are modelled, not certified station measurements.</li><li>New language translations are experimental and need native-speaker review.</li><li>Demo data is synthetic. Missing data never means a district is safe.</li><li>Saved districts and checklist progress are stored on this device, not cloud-synced.</li></ul><p class="fine-print">Consult local authorities for official warnings, evacuation orders and shelter information.</p></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
 </body>
 </html>

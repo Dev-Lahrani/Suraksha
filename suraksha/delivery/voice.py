@@ -50,6 +50,10 @@ def _voice_for(language: str) -> str:
         "te": s.tts_voice_te,
         "kn": s.tts_voice_kn,
         "bn": s.tts_voice_bn,
+        "gu": s.tts_voice_gu,
+        "pa": s.tts_voice_pa,
+        "ml": s.tts_voice_ml,
+        "ur": s.tts_voice_ur,
     }.get(language, "")
 
 

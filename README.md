@@ -16,9 +16,12 @@ Suraksha continuously ingests open climate data for Indian districts, scores hea
 
 ## ✨ Headline features
 
-- 🗺️ **Live pan-India risk map** — dark-theme MapLibre dashboard, districts colored by computed risk, updated hourly from real data (no canned demo).
+- 🗺️ **Premium climate command center** — responsive dark workspace with a locally rendered geographic HQ risk plot, coverage metrics, hazard filters and a 7-day date selector. Real data in live mode; clearly labelled synthetic data in demo mode.
+- ⭐ **Personal monitoring** — district search, state/risk filters, device-local saved districts, shareable district links and nearest curated HQ lookup.
+- ⇄ **District comparison + exports** — compare 2–4 districts, inspect history/forecast trends, export CSV or download PDF briefs.
+- ☑ **Preparedness workspace** — severity-specific multilingual safety checklists with device-local progress.
 - 🚨 **Watchlist — highest risk now** — districts ranked by worst expected hazard for the next 48h, each with a one-line reason traced to the engine drivers ("3-day rain 210mm vs heavy-day p90 45mm"). Officials' answer to "where do we act first?": `GET /api/watchlist` + a ranked panel on the dashboard.
-- 💬 **WhatsApp + web chat agent** — ask *"क्या अगले 5 दिन में नागपुर में बाढ़ का खतरा है?"* and get a grounded advisory in Hindi. Language auto-detected (English / हिन्दी / मराठी / தமிழ் / తెలుగు / ಕನ್ನಡ / বাংলা). New language translations are experimental and need native-speaker safety review.
+- 💬 **WhatsApp + web chat agent** — ask *"क्या अगले 5 दिन में नागपुर में बाढ़ का खतरा है?"* and get a grounded advisory in Hindi. Language auto-detected (English / हिन्दी / मराठी / தமிழ் / తెలుగు / ಕನ್ನಡ / বাংলা / ગુજરાતી / ਪੰਜਾਬੀ / മലയാളം / اردو). New language translations are experimental and need native-speaker safety review.
 - 🔊 **Voice advisories** — Indic neural TTS (edge-tts) for low-literacy users; on WhatsApp, send **"voice <district>"** or just a voice note and get the advisory back as an audio message.
 - ⚠️ **Explainable anomaly alerts** — *"Daily rainfall 80mm is 4.1× the 30-year normal for this date."*
 - 📄 **One-page PDF district brief** — color-coded risk table, 7-day outlook, anomalies, sources. For district officials.
@@ -46,7 +49,7 @@ python -m suraksha ask "पुणे में गर्मी का खतर�
 python -m suraksha run            # → http://localhost:8000
 ```
 
-Open **http://localhost:8000** → click any district → advisory, voice, PDF, 7-day chart. The chat widget bottom-right answers in en/hi/mr.
+Open **http://localhost:8000** → use the risk landscape or district explorer → advisory, voice, PDF, CSV, forecast and history. The assistant supports 11 languages. Gujarati/Punjabi/Malayalam/Urdu accept selected localized district aliases; all districts remain searchable by English name or ID. Urdu advisory text renders right-to-left. New translations are experimental.
 
 ### Optional: enable the LLM agent + WhatsApp
 
@@ -69,8 +72,8 @@ DEMO_MODE=true DATABASE_URL=sqlite:///data/demo.db python -m suraksha run
 
 The dashboard labels this mode **DEMO / synthetic data**. Chat, the watchlist,
 district advisories, forecast charts and PDF briefs work without external APIs.
-Map/chart libraries load from CDNs, so pre-load the page before an offline demo;
-chat and the watchlist still work if those libraries cannot load. Voice falls back
+The dashboard, coordinate plot and trend charts render from local assets without
+CDNs, so the workspace can load over localhost without internet access. Voice falls back
 to the browser's installed speech voices, or an explicit text-only message.
 
 Live mode starts ingestion in the background immediately and then hourly. First
@@ -90,9 +93,11 @@ remain available for demo users. See [AUDIT.md](AUDIT.md) for remaining limitati
 
 ```bash
 python -m pytest -q
+node --test tests/frontend.test.cjs
+node --check suraksha/web/app.js
 ```
 
-Offline tests cover: risk engines, i18n, forecaster + model persistence (synthetic data), anomaly detection (seeded DB), ingestion pipeline (mocked HTTP), chat brain, voice synthesis, PDF brief, and FastAPI endpoints. No network, no keys, runs in seconds.
+Offline tests cover: risk engines, i18n, forecaster + model persistence (synthetic data), anomaly detection (seeded DB), ingestion pipeline (mocked HTTP), chat brain, voice synthesis, PDF brief, and FastAPI endpoints. No network or keys. Frontend interaction tests use Node's built-in test runner.
 
 ## 🏗️ Architecture
 
@@ -107,7 +112,7 @@ Open-Meteo CAMS AQ ──┘            GBM forecaster (if it beats      chat br
 - **Backend:** Python, FastAPI, SQLAlchemy, APScheduler, httpx
 - **ML:** scikit-learn GradientBoosting (beats climatology baseline or it isn't shown)
 - **Data:** Open-Meteo forecast + ERA5 archive + CAMS air quality — all free, no API keys
-- **Frontend:** MapLibre GL + Chart.js (CDN, zero build step)
+- **Frontend:** dependency-free HTML/CSS/JavaScript with local SVG coordinate plots and trend charts (zero build step, no CDN).
 
 ## 📂 Project layout
 

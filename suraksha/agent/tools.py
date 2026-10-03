@@ -7,7 +7,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from suraksha.agent.i18n import detect_language, format_advisory, format_forecast
+from suraksha.agent.i18n import DISTRICT_ALIASES, LANGUAGES, detect_language, format_advisory, format_forecast
 from suraksha.core.anomaly import detect_anomalies
 from suraksha.data.pipeline import latest_pm25
 from suraksha.db import District, RiskScore, SessionLocal, WeatherDay
@@ -19,6 +19,10 @@ def find_district(query: str, db: Session) -> District | None:
     q = (query or "").strip().lower()
     if not q:
         return None
+    for aliases in DISTRICT_ALIASES.values():
+        for alias, district_id in aliases.items():
+            if alias in q:
+                return db.get(District, district_id)
     districts = db.query(District).all()
     for d in districts:  # exact id
         if d.id.lower() == q:
@@ -302,7 +306,7 @@ def tool_schema() -> list[dict]:
                     "type": "object",
                     "properties": {
                         "district_id": {"type": "string"},
-                        "language": {"type": "string", "enum": ["en", "hi", "mr", "ta", "te", "kn", "bn"]},
+                        "language": {"type": "string", "enum": list(LANGUAGES)},
                     },
                     "required": ["district_id"],
                 },

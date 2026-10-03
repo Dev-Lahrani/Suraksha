@@ -22,7 +22,35 @@ CLIMATOLOGY_START = date(1995, 1, 1)
 CLIMATOLOGY_END = date(2024, 12, 31)
 
 
+_pipeline_running = False
+_pipeline_status: dict = {"running": False, "last_run": None, "last_error": None}
+
+
+def pipeline_status() -> dict:
+    return dict(_pipeline_status)
+
+
 async def run_pipeline(force: bool = False) -> dict:
+    """Prevent concurrent scheduler/manual runs in this single-worker process."""
+    global _pipeline_running
+    if _pipeline_running:
+        return {"districts": 0, "weather_rows": 0, "aq_rows": 0, "risk_rows": 0,
+                "ml_models": 0, "errors": [], "skipped": "already_running"}
+    _pipeline_running = True
+    _pipeline_status.update(running=True, last_error=None)
+    try:
+        result = await _run_pipeline(force)
+        _pipeline_status["last_run"] = result
+        return result
+    except Exception as exc:
+        _pipeline_status["last_error"] = str(exc)
+        raise
+    finally:
+        _pipeline_running = False
+        _pipeline_status["running"] = False
+
+
+async def _run_pipeline(force: bool = False) -> dict:
     """Full ingestion for every district + risk scoring. Returns a summary dict."""
     with SessionLocal() as db:
         districts = db.query(District).all()

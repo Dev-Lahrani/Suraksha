@@ -15,4 +15,8 @@ jobs:
       - run: pip install -r requirements.txt
       - run: python -m compileall -q suraksha tests
       - run: python -m pytest -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - run: node --check suraksha/web/app.js
+      - run: node --test tests/frontend.test.cjs
