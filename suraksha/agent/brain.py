@@ -43,7 +43,7 @@ _DISTRICT_HINT = re.compile(
 # marks are not \w), so Indic patterns match as plain substrings and "stop" is
 # checked before "subscribe" ("unsubscribe" must win over its own substring).
 _STOP_RE = re.compile(r"\b(stop|unsubscribe)\b|रद्द कर|बंद कर|सदस्यता रद्द", re.IGNORECASE)
-_SUBSCRIBE_RE = re.compile(r"subscribe|सदस्यता", re.IGNORECASE)
+_SUBSCRIBE_RE = re.compile(r"^subscribe(?:\s|$)|^सदस्यता", re.IGNORECASE)
 
 
 def _get_session(session_id: str) -> ChatSession:
@@ -184,7 +184,7 @@ def _subscription_command(text: str) -> str | None:
     t = (text or "").strip()
     if len(t.split()) > 6:
         return None
-    if _STOP_RE.search(t):
+    if _STOP_RE.fullmatch(t) or t.lower() in ("stop", "unsubscribe") or t.startswith(("सदस्यता रद्द", "रद्द कर", "बंद कर")):
         return "stop"
     if _SUBSCRIBE_RE.search(t):
         return "subscribe"
@@ -209,7 +209,7 @@ def _resolve_district(text: str):
 
 def _detect_intent(text: str) -> str:
     t = text.lower()
-    if any(w in t for w in ("forecast", "मौसम", "हवामान", "अंदाज", "अनुमान", "अगले", "पुढील")):
+    if any(w in t for w in ("forecast", "मौसम", "हवामान", "अंदाज", "अनुमान", "अगले", "पुढील", "પૂર્વાનુમાન", "ਅਨੁਮਾਨ", "പ്രവചനം", "پیش گوئی")):
         return "forecast"
     if any(w in t for w in ("anomal", "unusual", "सामान्य से", "विसंगत", "असामान्य")):
         return "anomaly"

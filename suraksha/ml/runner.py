@@ -137,6 +137,17 @@ def ml_outlook(district_id: str, days: int = 5) -> list[dict] | None:
             return None
         start = latest_day + timedelta(days=1)
         rows = predict(models, hist, clim, start=start, days=days)
+        # Each target must earn its own place in the product. Keep model
+        # internals for recursion, but never expose a target that loses its baseline.
+        valid_t = run.mae_tavg is not None and run.mae_tavg_baseline is not None and run.mae_tavg < run.mae_tavg_baseline
+        valid_r = run.mae_rain is not None and run.mae_rain_baseline is not None and run.mae_rain < run.mae_rain_baseline
+        if not (valid_t or valid_r):
+            return None
+        for row in rows:
+            if not valid_t:
+                row["tavg"] = None
+            if not valid_r:
+                row["precipitation"] = None
         return rows or None
     except Exception:  # noqa: BLE001
         logger.exception("ml_outlook failed for %s", district_id)

@@ -31,7 +31,7 @@ function node(tag, cls, text) { const el = document.createElement(tag); if (cls)
 function notify(text) { $("toast").textContent = text; $("toast").hidden = false; clearTimeout(notify.timer); notify.timer = setTimeout(() => $("toast").hidden = true, 4500); }
 async function api(url, options = {}) {
   const controller = new AbortController(); const timer = setTimeout(() => controller.abort(), 25000);
-  try { const res = await fetch(url, { ...options, signal: controller.signal }); if (!res.ok) throw new Error(`Request failed (${res.status})`); return await res.json(); }
+  try { const res = await fetch(url, { ...options, signal: controller.signal, cache: "no-store" }); if (!res.ok) throw new Error(`Request failed (${res.status})`); return await res.json(); }
   finally { clearTimeout(timer); }
 }
 function riskFor(id) { return state.risks.find(r => r.id === id)?.hazards || {}; }
@@ -42,7 +42,7 @@ function setView(view) {
   state.view = view;
   document.querySelectorAll(".view").forEach(el => el.hidden = el.id !== "view-" + view);
   document.querySelectorAll("[data-view]").forEach(el => el.classList.toggle("active", el.dataset.view === view));
-  const titles = { overview: "Overview", explore: "District explorer", saved: "Saved districts", compare: "Compare districts", preparedness: "Preparedness" };
+  const titles = { overview: "Overview", explore: "District explorer", saved: "Saved districts", compare: "Compare districts", preparedness: "Preparedness", scenario: "What-if lab" };
   $("view-title").textContent = titles[view];
   $("page-title").textContent = view === "overview" ? "A clearer view of climate risk." : titles[view];
   if (view === "saved") renderSaved();
@@ -64,6 +64,7 @@ async function refresh() {
     try { state.districts = await api("/api/districts"); populateRegistry(); renderPlot(); renderExplorer(); renderSaved(); }
     catch { /* keep the retry affordance */ }
   }
+  if (generation !== state.refreshGeneration) return;
   if (health.status === "fulfilled") {
     state.demo = health.value.demo;
     $("connection").lastChild.textContent = health.value.pipeline?.running ? " Updating data" : " API connected";
@@ -187,12 +188,13 @@ function selectTab(tab) {
   document.querySelectorAll(".drawer-tabs button").forEach(el => { el.classList.toggle("active", el.dataset.tab === tab); el.setAttribute("aria-selected", String(el.dataset.tab === tab)); });
   document.querySelectorAll(".tab-panel").forEach(el => el.hidden = el.id !== "tab-" + tab);
   if (tab === "history") loadHistory();
+  if (tab === "mission") loadMission();
 }
 async function openDistrict(id) {
-  state.selected = id; state.context = null; const generation = ++state.generation;
+  state.selected = id; state.context = null; state.mission = null; const generation = ++state.generation;
   $("district-drawer").hidden = false; $("drawer-backdrop").hidden = false; document.body.style.overflow = "hidden";
   $("d-name").textContent = "Loading district…"; $("d-sub").textContent = ""; $("advisory").textContent = "Loading grounded guidance…";
-  ["district-badges", "anomalies", "forecast-chart", "forecast-table", "history-chart", "history-table"].forEach(id => $(id).replaceChildren());
+  ["district-badges", "anomalies", "forecast-chart", "forecast-table", "history-chart", "history-table", "mission-content"].forEach(id => $(id).replaceChildren());
   $("ml-note").hidden = true; selectTab("advisory"); updateSaveButton();
   const url = new URL(location.href); url.searchParams.set("district", id); history.replaceState(null, "", url);
   try {
@@ -205,6 +207,8 @@ async function openDistrict(id) {
     $("translation-note").hidden = !state.languages.find(l => l.code === language())?.experimental;
     ctx.anomalies.forEach(e => $("anomalies").append(node("div", "anomaly-item", `${e.day} · ${e.message}`)));
     drawChart("forecast-chart", ctx.forecast, ["tavg", "precipitation"]); renderDataTable("forecast-table", ctx.forecast);
+    const known = Object.values(risks).filter(r => r.score != null).length;
+    $("district-quality").textContent = `${known}/3 hazards scored today · ${ctx.forecast.length}/7 forecast days. Availability is not accuracy. ${state.demo ? "Synthetic demo data." : "Check official warnings."}`;
     loadMl(id, generation); $("close-district").focus();
   } catch { if (generation === state.generation) { $("d-name").textContent = "District unavailable"; $("advisory").textContent = "Could not load district data. Close this panel and try again."; } }
 }
@@ -259,7 +263,7 @@ function openChat() { $("chat-panel").hidden = false; $("chat-input").focus(); }
 function message(text, type) { const msg = node("div", "msg " + type, text); msg.dir = "auto"; $("chat-log").append(msg); $("chat-log").scrollTop = $("chat-log").scrollHeight; return msg; }
 async function sendChat(text) {
   if (state.chatBusy || !text.trim()) return; state.chatBusy = true; $("chat-send").disabled = true; message(text,"user"); const pending = message("Thinking with district data…","bot");
-  try { const response = await api("/api/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:state.session,message:text,language:language()})}); pending.textContent = response.reply; }
+  try { const response = await api("/api/chat", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:state.session,message:text,language:language() === "en" ? null : language()})}); pending.textContent = response.reply; }
   catch { pending.textContent = "Connection unavailable. Please retry. Your district advisory is also available in the explorer."; }
   finally { state.chatBusy = false; $("chat-send").disabled = false; $("chat-log").scrollTop = $("chat-log").scrollHeight; }
 }
@@ -270,6 +274,47 @@ async function locate() {
     try { const d = await api(`/api/nearest?lat=${position.coords.latitude}&lon=${position.coords.longitude}`); openDistrict(d.id); notify(`Nearest curated HQ: ${d.name_en}, ${d.distance_km} km away. Not a boundary lookup.`); }
     catch { notify("Location lookup unavailable. Search your district instead."); } finally { $("locate").disabled = false; }
   }, () => { $("locate").disabled = false; notify("Location permission denied or unavailable. Search your district instead."); }, {timeout:10000,maximumAge:300000});
+}
+async function loadMission() {
+  if (!state.selected) return;
+  const id = state.selected, generation = state.generation;
+  $("mission-content").replaceChildren(node("p", "empty", "Building district mission brief…"));
+  try {
+    const data = await api(`/api/district/${id}/mission?lang=${language()}`);
+    if (generation !== state.generation) return;
+    state.mission = data;
+    const content = $("mission-content"); content.replaceChildren();
+    content.append(node("p", "translation-note", `${data.demo ? "DEMO · " : ""}${data.coverage.percent}% hazard-day coverage · ${data.coverage.scored_hazard_days}/21 slots scored. Not confidence.`));
+    const timeline = node("div", "mission-timeline");
+    data.timeline.forEach(row => { const cell = node("div", "timeline-cell " + band(row.overall)); cell.append(node("small", "", row.day.slice(5)), node("strong", "", number(row.overall)), node("small", "", `${row.known_hazards}/3 known`)); timeline.append(cell); }); content.append(timeline);
+    data.priorities.forEach(priority => { const section = node("section", "mission-priority"); section.append(node("h3", band(priority.score), `${HAZARDS[priority.hazard]} · ${number(priority.score)}/100`), node("p", "muted", `Peak ${priority.peak_day} · ${priority.reason}`)); priority.steps.forEach(step => { const p = node("p", "", "→ " + step); p.dir="auto"; section.append(p); }); content.append(section); });
+    if (!data.priorities.length) content.append(node("p", "empty", "No scored hazards in the mission window. Do not interpret this as safe."));
+    content.append(node("p", "fine-print", data.limitations.join(" ")));
+  } catch { if (generation === state.generation) $("mission-content").replaceChildren(node("p", "empty", "Mission brief unavailable. Please retry.")); }
+}
+function printMission() {
+  if (!state.mission) {notify("Load the mission brief before printing.");return;}
+  document.body.classList.add("printing-mission");
+  window.print();
+  document.body.classList.remove("printing-mission");
+}
+async function runScenario() {
+  const form = $("scenario-form"), inputs = {};
+  for (const key of ["tmax","humidity","rain_today","rain_3day","rain_p90","pm25"]) inputs[key] = form.elements[key].value === "" ? null : Number(form.elements[key].value);
+  inputs.language = language();
+  const generation = (state.scenarioGeneration || 0) + 1; state.scenarioGeneration = generation;
+  if (inputs.rain_3day < inputs.rain_today) {notify("3-day rain must include today’s rain.");return;}
+  $("scenario-run").disabled = true;
+  try {
+    const result = await api("/api/scenario",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(inputs)});
+    if (generation !== state.scenarioGeneration) return;
+    $("scenario-results").replaceChildren();
+    Object.entries(result.risks).forEach(([hazard,risk]) => { const card = node("section","mission-priority");card.append(node("h3",band(risk.score),`${HAZARDS[hazard]} · ${number(risk.score)}/100`),node("p","muted",risk.band));
+      Object.entries(risk.detail).forEach(([key,value]) => card.append(node("p","driver-line",`${key}: ${value}`)));
+      risk.actions.forEach(action => {const p=node("p","", "→ " + action);p.dir="auto";card.append(p);});$("scenario-results").append(card); });
+    notify("Simulation complete. Live district data was not changed.");
+  } catch { $("scenario-results").replaceChildren(node("p","empty","Simulation unavailable or invalid inputs. Check values and retry.")); }
+  finally {if (generation === state.scenarioGeneration) $("scenario-run").disabled=false;}
 }
 function bind() {
   document.querySelectorAll("[data-view]").forEach(el => el.onclick = () => setView(el.dataset.view));
@@ -290,6 +335,16 @@ function bind() {
   $("chat-form").onsubmit = e => {e.preventDefault();const text=$("chat-input").value;$("chat-input").value="";sendChat(text);};
   document.querySelectorAll("[data-prompt]").forEach(el => el.onclick = () => { const district = state.districts.find(d => d.id === state.selected) || state.districts.find(d => state.saved.has(d.id)); if (!district) {notify("Name a district in chat, or save one first.");return;} sendChat(`${district.name_en} ${el.dataset.prompt}`); });
   $("locate").onclick = locate;
+  $("print-mission").onclick = printMission;
+  $("scenario-form").onsubmit = e => { e.preventDefault(); runScenario(); };
+  document.querySelectorAll("[data-preset]").forEach(el => el.onclick = () => {
+    const values = {heat:{tmax:44,humidity:65,rain_today:0,rain_3day:0,rain_p90:30,pm25:""},rain:{tmax:29,humidity:90,rain_today:110,rain_3day:260,rain_p90:35,pm25:""},air:{tmax:30,humidity:50,rain_today:0,rain_3day:0,rain_p90:30,pm25:180}}[el.dataset.preset];
+    Object.entries(values).forEach(([key,value]) => $("scenario-form").elements[key].value = value); runScenario();
+  });
+  $("present").onclick = () => { document.body.classList.toggle("presentation"); notify("Presentation mode toggled. Press ⛶ again to exit."); };
+  let installEvent = null;
+  window.addEventListener("beforeinstallprompt", e => {e.preventDefault();installEvent=e;$("install-app").hidden=false;});
+  $("install-app").onclick = async () => {if(installEvent){await installEvent.prompt();installEvent=null;$("install-app").hidden=true;}};
   ["about-button","footer-about"].forEach(id => $(id).onclick = () => $("about-dialog").showModal()); $("close-about").onclick = () => $("about-dialog").close();
   document.addEventListener("keydown", e => {
     if(e.key === "Escape") {closeDistrict();$("chat-panel").hidden=true;}
@@ -299,7 +354,7 @@ function bind() {
       else if (focusable.length && !e.shiftKey && document.activeElement === focusable.at(-1)) {e.preventDefault();focusable[0].focus();}
     }
     if(["INPUT","SELECT","TEXTAREA"].includes(e.target.tagName) || e.ctrlKey || e.metaKey || e.altKey) return;
-    const views={1:"overview",2:"explore",3:"compare",4:"preparedness"}; if(views[e.key]) setView(views[e.key]);
+    const views={1:"overview",2:"explore",3:"compare",4:"preparedness",5:"scenario"}; if(views[e.key]) setView(views[e.key]);
   });
   window.addEventListener("offline",() => {$("connection").lastChild.textContent=" Offline";notify("You’re offline. Previously loaded results may be stale.");});
   window.addEventListener("online",refresh);
@@ -307,6 +362,7 @@ function bind() {
 async function boot() {
   state.day = today(); for(let offset=0;offset<7;offset++){const option=node("option","",offset===0?"Today":dateOffset(offset).slice(5));option.value=dateOffset(offset);$("risk-day").append(option);}
   $("date-label").textContent = new Intl.DateTimeFormat("en-IN",{dateStyle:"medium",timeZone:"Asia/Kolkata"}).format(new Date()) + " · IST";
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
   bind(); message("Welcome to Suraksha. Ask about a district’s climate risks, forecasts or unusual weather. Try ‘Pune advisory’. No paid AI key required.","bot");
   const [districts,languages] = await Promise.allSettled([api("/api/districts"),api("/api/languages")]);
   if(districts.status === "fulfilled") {state.districts=districts.value;populateRegistry();} else notify("District registry could not load. Reload the page to retry.");

@@ -1,0 +1,12 @@
+{
+  "id": "/",
+  "name": "Suraksha Climate Intelligence",
+  "short_name": "Suraksha",
+  "description": "Explainable district climate risks and preparedness in your language.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0b1118",
+  "theme_color": "#0b1118",
+  "icons": [{"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable"}]
+}

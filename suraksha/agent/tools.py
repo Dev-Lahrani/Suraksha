@@ -144,6 +144,8 @@ def build_hazard_list(ctx: dict, language: str) -> list[dict]:
     today = date.today().isoformat()
     hazards: dict[str, dict] = {}
     for day, hs in ctx.get("risks", {}).items():
+        if day < today:
+            continue  # yesterday's hazard must not drive a forward-looking advisory
         for hazard, res in hs.items():
             cur = hazards.get(hazard)
             if cur is None or (res.get("score") or 0) > (cur.get("score") or 0):
@@ -247,7 +249,9 @@ def watchlist(
             detail = json.loads(r.detail or "{}")
         except json.JSONDecodeError:
             detail = {}
-        score = r.score if r.score is not None else -1.0
+        if r.score is None:
+            continue
+        score = r.score
         cur = per_district.setdefault(r.district_id, {}).get(r.hazard)
         if cur is None or score > cur[0]:
             per_district[r.district_id][r.hazard] = (

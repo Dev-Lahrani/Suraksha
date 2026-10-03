@@ -173,7 +173,7 @@ def test_ml_outlook_roundtrip(pune_history):
     rows = ml_runner.ml_outlook("PUNE", days=5)
     assert rows is not None and len(rows) == 5
     assert all("day" in r and "tavg" in r and "precipitation" in r for r in rows)
-    assert all(r["precipitation"] >= 0 for r in rows)
+    assert all(r["precipitation"] is None or r["precipitation"] >= 0 for r in rows)
 
 
 def test_ml_outlook_absent_model_is_none(pune_history):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import date
 
 import httpx
@@ -35,10 +36,17 @@ async def _get_json(client: httpx.AsyncClient, url: str, params: dict) -> dict:
             resp = await client.get(url, params=params, timeout=60.0)
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
-                wait = float(retry_after) if retry_after else wait
+                try:
+                    wait = min(60.0, max(0.0, float(retry_after))) if retry_after else wait
+                except ValueError:
+                    pass  # HTTP-date Retry-After: use bounded default backoff
                 raise _RateLimited(url)
             resp.raise_for_status()
             return resp.json()
+        except httpx.HTTPStatusError as exc:
+            if 400 <= exc.response.status_code < 500:
+                raise  # invalid coordinates/parameters will not improve on retry
+            last_err = exc
         except _RateLimited as exc:
             last_err = exc
             logger.warning("rate limited on %s (attempt %d); sleeping %.0fs", url, attempt, wait)
@@ -146,7 +154,10 @@ def _parse_daily(data: dict) -> dict:
         def _v(key: str) -> float | None:
             vals = daily.get(key, [])
             v = vals[i] if i < len(vals) else None
-            return float(v) if v is not None else None
+            if v is None:
+                return None
+            value = float(v)
+            return value if math.isfinite(value) else None
 
         out.append(
             {

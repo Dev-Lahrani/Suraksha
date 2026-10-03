@@ -13,10 +13,10 @@ def seed_demo() -> None:
         raise ValueError("DEMO_MODE requires a separate DATABASE_URL containing 'demo'")
     with SessionLocal() as db:
         districts = db.query(District).order_by(District.id).all()
+        existing = {(row.district_id, row.doy) for row in db.query(Climatology).all()}
         for district in districts:
             for doy in range(1, 367):
-                row = db.query(Climatology).filter_by(district_id=district.id, doy=doy).first()
-                if row is None:
+                if (district.id, doy) not in existing:
                     db.add(Climatology(district_id=district.id, doy=doy,
                                       tavg_normal=27.0, rain_normal=4.0, rain_p90=30.0))
         db.commit()

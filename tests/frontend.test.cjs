@@ -80,6 +80,22 @@ test('coordinate plot supplies keyboard accessible district points', () => {
   assert.equal(typeof point.onkeydown, 'function');
 });
 
+test('mission brief renders coverage and missing hazards without claiming confidence', async () => {
+  const app = setup();
+  app.run("state.selected='PUNE'; state.generation=1;");
+  app.context.fetch = async () => ({ok:true,json:async()=>({demo:true,coverage:{percent:10,scored_hazard_days:2},timeline:[{day:'2026-10-03',overall:null,known_hazards:0}],priorities:[],limitations:['No data means unknown.']})});
+  await app.run('loadMission()');
+  assert.match(app.elements.get('mission-content').children[0].textContent,/Not confidence/);
+  assert.equal(app.run('state.mission.demo'),true);
+});
+
+test('English chat leaves script detection enabled and selected regional language is explicit', async () => {
+  const app = setup();let payload;
+  app.context.fetch = async (_,options) => {payload=JSON.parse(options.body);return {ok:true,json:async()=>({reply:'ok'})};};
+  app.run("$('language').value='en'");await app.run("sendChat('पुणे')");assert.equal(payload.language,null);
+  app.run("$('language').value='ur'");await app.run("sendChat('Pune')");assert.equal(payload.language,'ur');
+});
+
 test('API failure is surfaced instead of parsing an error as success', async () => {
   const app = setup();
   app.context.fetch = async () => ({ ok: false, status: 503 });

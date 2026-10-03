@@ -64,6 +64,18 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Suraksha API", version="0.2.0", lifespan=lifespan)
 from suraksha.server.insights import router as insights_router
 app.include_router(insights_router)
+from suraksha.server.missions import router as missions_router
+app.include_router(missions_router)
+
+
+@app.middleware("http")
+async def response_safety_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    if request.url.path.startswith(("/api/", "/webhook/")):
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def require_admin(request: Request) -> None:
@@ -97,6 +109,21 @@ def app_js() -> FileResponse:
 @app.get("/styles.css")
 def stylesheet() -> FileResponse:
     return FileResponse(WEB_DIR / "styles.css", media_type="text/css")
+
+
+@app.get("/manifest.webmanifest")
+def manifest() -> FileResponse:
+    return FileResponse(WEB_DIR / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(WEB_DIR / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/icon.svg")
+def app_icon() -> FileResponse:
+    return FileResponse(WEB_DIR / "icon.svg", media_type="image/svg+xml")
 
 
 @app.get("/blocked.html")
@@ -150,7 +177,7 @@ def risk_map(day: date | None = None, db: Session = Depends(get_db)) -> list[dic
         d = districts.get(did)
         if not d:
             continue
-        overall = max((h["score"] or 0) for h in hazards.values()) if hazards else 0
+        overall = max((h["score"] for h in hazards.values() if h["score"] is not None), default=None)
         out.append(
             {
                 "id": did,
@@ -166,7 +193,7 @@ def risk_map(day: date | None = None, db: Session = Depends(get_db)) -> list[dic
                 "lon": d.lon,
                 "population": d.population,
                 "hazards": hazards,
-                "overall": round(overall, 1),
+                "overall": round(overall, 1) if overall is not None else None,
             }
         )
     return out
@@ -296,7 +323,15 @@ async def ingest(force: bool = False) -> dict:
 @app.post("/api/subscribers", dependencies=[Depends(require_admin)])
 async def create_subscriber(request: Request) -> dict:
     """Register a subscriber (id + district). Used by the dashboard button too."""
-    body = await request.json()
+    try:
+        body = await request.json()
+    except ValueError as exc:
+        raise HTTPException(400, "Invalid JSON") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(400, "JSON object required")
+    language = str(body.get("language") or "en")
+    if language not in LANGUAGES:
+        raise HTTPException(422, "Unsupported language")
     sid = str(body.get("id") or "").strip()[:128]
     district_id = str(body.get("district_id") or "").strip()
     if not sid or not district_id:
@@ -304,7 +339,7 @@ async def create_subscriber(request: Request) -> dict:
     with SessionLocal() as db:
         if not db.get(District, district_id):
             raise HTTPException(400, f"Unknown district {district_id}")
-    subscribe(sid, district_id, str(body.get("language") or "en"))
+    subscribe(sid, district_id, language)
     return {"status": "subscribed", "id": sid, "district_id": district_id}
 
 

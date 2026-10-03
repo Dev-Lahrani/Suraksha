@@ -1,5 +1,22 @@
 # Hackathon audit — 2026-10-03
 
+## Finale demo expansion
+
+- Added seven-day mission briefs with per-hazard missing-data coverage, priority
+  drivers/actions and a browser-print flow. Coverage is explicitly not confidence.
+- Added finite, bounded educational scenario inputs and heat/rain/air presets;
+  scoring uses the same deterministic engines without database writes.
+- Added local manifest/icon/service worker and optional install prompt. App-shell
+  caching excludes all API/webhook traffic; responses carry no-store headers.
+- Added presentation mode, `demo` one-command safe launch and `doctor` readiness
+  reporting. Demo seeding now uses one climatology lookup rather than 15,000 queries.
+- Fixed accidental unsubscribe questions, English-selector blocking script
+  detection, yesterday-driven future advisories, null-score safe displays,
+  malformed subscriber inputs and unnecessary retries of invalid provider requests.
+- ML outputs now withhold each target that fails its own baseline comparison.
+- Added isolated first-launch demo integration test and service-worker cache-policy
+  tests, plus pitch/demo, API and architecture handoff docs in `docs/`.
+
 ## Command-center expansion (v0.2)
 
 - Replaced overlapping panels with a responsive premium dark workspace,
@@ -87,8 +104,9 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
    No automated browser visual tests ran (Chrome unavailable).
 6. First ingestion stores only a short recent history; ML normally stays withheld
    until sufficient observations accumulate. Backfill is not implemented. A
-   model can beat one target's baseline while losing the other; per-target
-   withholding and clearer validation presentation are still needed.
+   model can beat one target's baseline while losing the other; the losing
+   target is now withheld independently. Validation remains holdout-based,
+   not field-proven operational accuracy.
 7. Daily AQ uses available CAMS hourly model values, not a certified station
    24-hour measurement. Future days without AQ are unknown. Heat uses daily
    maximum temperature and mean humidity (not concurrent peak observations).
@@ -99,7 +117,7 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
    persistent audit retention, dependency locking/security scanning and full
    privacy deletion. Admin key/local restriction is not a complete auth system.
 9. Registry covers 42 curated districts, not 700+. Historical roadmap items such
-   as river/fire ingestion, ASR, PWA caching and public production deployment are
+   as river/fire ingestion, ASR and public production deployment are
    unimplemented. plan.md is the original proposal, not a completion checklist.
 
 Live provider reliability, free-tier quotas and hosting availability are external

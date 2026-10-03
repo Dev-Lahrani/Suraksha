@@ -19,4 +19,5 @@ jobs:
         with:
           node-version: "22"
       - run: node --check suraksha/web/app.js
-      - run: node --test tests/frontend.test.cjs
+      - run: node --check suraksha/web/sw.js
+      - run: node --test tests/frontend.test.cjs tests/service-worker.test.cjs

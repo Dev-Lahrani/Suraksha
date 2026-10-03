@@ -155,7 +155,7 @@ def format_alert(
     lines = [_ALERT_HEADER[lang].format(
         district=(district.get("name_" + _name_key(lang)) or district.get("name_en", "")), state=district["state"]
     )]
-    if not hazards:
+    if not hazards and not anomalies:
         lines.append(_NO_FORECAST[lang])
     for h in hazards:
         label = LABELS[lang].get(h["hazard"], h["hazard"])
