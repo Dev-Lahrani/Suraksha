@@ -1,6 +1,7 @@
 """Proactive alerting tests (offline; no WhatsApp credentials → sends are skipped, not sent)."""
 
 import asyncio
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 
 import pandas as pd
@@ -43,7 +44,7 @@ def fresh_nagpur():
 
 
 def _seed_high_flood_risk(district_id="NAGPUR", day=None):
-    day = day or (date.today() + timedelta(days=1))
+    day = day or (india_today() + timedelta(days=1))
     with SessionLocal() as db:
         db.add(
             RiskScore(
@@ -141,7 +142,7 @@ def test_alert_one_dedupes_exact_day_and_reason(fresh_nagpur):
 def test_alert_one_suppresses_recent_same_reason(fresh_nagpur):
     """A hazard that stays high for days must not re-alert within DEDUPE_DAYS."""
     subscribe("sw3", "NAGPUR", "en")
-    yesterday = date.today() - timedelta(days=1)
+    yesterday = india_today() - timedelta(days=1)
     with SessionLocal() as db:
         db.add(
             AlertLog(

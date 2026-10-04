@@ -1,5 +1,6 @@
 """Anomaly detection tests (uses the seeded test DB, PUNE district)."""
 
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 
 from suraksha.core.anomaly import detect_anomalies
@@ -31,7 +32,7 @@ def _seed_climatology():
 
 def test_no_anomalies_on_normal_weather(clean_pune):
     _seed_climatology()
-    today = date.today()
+    today = india_today()
     with SessionLocal() as db:
         for k in range(5):
             day = today - timedelta(days=k)
@@ -54,7 +55,7 @@ def test_no_anomalies_on_normal_weather(clean_pune):
 
 def test_heat_and_extreme_rain_detected(clean_pune):
     _seed_climatology()
-    today = date.today()
+    today = india_today()
     with SessionLocal() as db:
         db.add(
             WeatherDay(
@@ -81,7 +82,7 @@ def test_heat_and_extreme_rain_detected(clean_pune):
 
 def test_wet_spell_detected(clean_pune):
     _seed_climatology()
-    today = date.today()
+    today = india_today()
     with SessionLocal() as db:
         for k in range(1, 6):
             db.add(

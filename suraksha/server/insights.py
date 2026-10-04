@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from suraksha.agent.i18n import language_catalog, playbook_actions
 from suraksha.agent.tools import build_hazard_list, district_context
 from suraksha.config import get_settings
+from suraksha.core.clock import india_today
 from suraksha.db import District, RiskScore, WeatherDay, get_db
 
 router = APIRouter(prefix="/api")
@@ -24,7 +25,7 @@ def languages() -> list[dict]:
 
 @router.get("/overview")
 def overview(day: date | None = None, db: Session = Depends(get_db)) -> dict:
-    selected = day or date.today()
+    selected = day or india_today()
     districts = db.query(District).all()
     risks = db.query(RiskScore).filter(RiskScore.day == selected, RiskScore.score.isnot(None)).all()
     scores: dict[str, float] = {}
@@ -34,19 +35,28 @@ def overview(day: date | None = None, db: Session = Depends(get_db)) -> dict:
         if risk.score >= 60 and risk.hazard in hazard_counts:
             hazard_counts[risk.hazard] += 1
     high = {did for did, score in scores.items() if score >= 60}
+    registered = {d.id for d in districts}
+    coverage = {h: {r.district_id for r in risks if r.hazard == h and r.district_id in registered}
+                for h in hazard_counts}
+    fully_covered = set.intersection(*coverage.values())
+    hazard_coverage = {h: {"covered": len(ids), "unknown": len(registered - ids),
+                           "missing_district_ids": sorted(registered - ids)}
+                       for h, ids in coverage.items()}
     return {"day": selected.isoformat(), "demo": get_settings().demo_mode,
             "districts": len(districts), "covered": len(scores),
             "high": len(high), "moderate": sum(25 <= s < 60 for s in scores.values()),
             "low": sum(s < 25 for s in scores.values()), "unknown": len(districts) - len(scores),
             "population_in_high_risk_districts": sum(d.population or 0 for d in districts if d.id in high),
             "hazard_high_counts": hazard_counts,
+            "hazard_coverage": hazard_coverage, "fully_covered": len(fully_covered),
+            "partial": len(set.union(*coverage.values()) - fully_covered),
             "note": "Population is district registry population, not estimated exposed people. Coverage means at least one scored hazard, not all hazards."}
 
 
 def history_rows(db: Session, district_id: str, days: int) -> list[dict]:
     if db.get(District, district_id) is None:
         raise HTTPException(404, "Unknown district")
-    start, end = date.today() - timedelta(days=days - 1), date.today() + timedelta(days=6)
+    start, end = india_today() - timedelta(days=days - 1), india_today() + timedelta(days=6)
     weather = db.query(WeatherDay).filter(WeatherDay.district_id == district_id,
                                         WeatherDay.day >= start, WeatherDay.day <= end).order_by(WeatherDay.day).all()
     risks = db.query(RiskScore).filter(RiskScore.district_id == district_id,
@@ -55,7 +65,7 @@ def history_rows(db: Session, district_id: str, days: int) -> list[dict]:
                     "precipitation": w.precipitation, "is_forecast": w.is_forecast, "risks": {}} for w in weather}
     for risk in risks:
         row = rows.setdefault(risk.day, {"day": risk.day.isoformat(), "tavg": None, "tmax": None,
-                                        "precipitation": None, "is_forecast": risk.day >= date.today(), "risks": {}})
+                                        "precipitation": None, "is_forecast": risk.day >= india_today(), "risks": {}})
         row["risks"][risk.hazard] = {"score": risk.score, "band": risk.band}
     return [rows[day] for day in sorted(rows)]
 

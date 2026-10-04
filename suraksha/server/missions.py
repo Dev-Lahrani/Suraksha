@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, ConfigDict
 from suraksha.agent.i18n import LANGUAGES, playbook_actions
 from suraksha.agent.tools import advisory_text, district_context, _hazard_reason
 from suraksha.config import get_settings
+from suraksha.core.clock import india_today
 from suraksha.core.risks import compute_risk_for_day
 
 router = APIRouter(prefix="/api")
@@ -19,7 +20,7 @@ def mission_brief(district_id: str, language: str = "en") -> dict:
     context = district_context(district_id)
     if not context:
         raise HTTPException(404, "Unknown district")
-    today = date.today()
+    today = india_today()
     timeline, peaks = [], {}
     for offset in range(7):
         day = (today + timedelta(days=offset)).isoformat()

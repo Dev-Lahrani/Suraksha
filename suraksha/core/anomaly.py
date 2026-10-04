@@ -6,6 +6,8 @@ Every event carries the numbers that triggered it, so an advisory can cite
 
 from __future__ import annotations
 
+from suraksha.core.clock import india_today
+
 from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
@@ -23,8 +25,8 @@ def detect_anomalies(district_id: str, lookback_days: int = 7) -> list[dict]:
             .filter(
                 WeatherDay.district_id == district_id,
                 WeatherDay.is_forecast.is_(False),
-                WeatherDay.day >= date.today() - timedelta(days=lookback_days),
-                WeatherDay.day <= date.today(),
+                WeatherDay.day >= india_today() - timedelta(days=lookback_days),
+                WeatherDay.day <= india_today(),
             )
             .order_by(WeatherDay.day.desc())
             .limit(lookback_days)

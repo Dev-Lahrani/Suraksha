@@ -12,6 +12,7 @@ class Element {
   querySelectorAll() { return []; }
   focus() {}
   get firstChild() { return this.children[0]; }
+  get lastChild() { return this.children.at(-1); }
 }
 function setup(storage = {}) {
   const elements = new Map();
@@ -94,6 +95,36 @@ test('English chat leaves script detection enabled and selected regional languag
   app.context.fetch = async (_,options) => {payload=JSON.parse(options.body);return {ok:true,json:async()=>({reply:'ok'})};};
   app.run("$('language').value='en'");await app.run("sendChat('पुणे')");assert.equal(payload.language,null);
   app.run("$('language').value='ur'");await app.run("sendChat('Pune')");assert.equal(payload.language,'ur');
+});
+
+test('failed refresh clears previously loaded scores instead of relabelling them', async () => {
+  const app = setup();
+  app.run(`state.day='2040-01-01'; state.districts=[{id:'PUNE',name_en:'Pune',state:'Maharashtra',lat:18.52,lon:73.86}]; state.risks=[{id:'PUNE',hazards:{heat:{score:90}}}]; $('connection').append(document.createElement('span'));`);
+  app.context.fetch = async () => ({ok:false,status:503});
+  await app.run('refresh()');
+  assert.equal(app.run('state.risks.length'),0);
+  assert.equal(app.elements.get('error-banner').hidden,false);
+  assert.equal(app.elements.get('refresh').disabled,false);
+  assert.match(app.elements.get('watchlist-list').children[0].textContent,/unavailable/);
+});
+
+test('coverage inspector identifies missing districts and preserves known zero', () => {
+  const app=setup();
+  app.run(`state.day='2040-01-01'; state.districts=[{id:'PUNE',name_en:'Pune',state:'Maharashtra'},{id:'NAGPUR',name_en:'Nagpur',state:'Maharashtra'}]; renderMetrics({day:state.day,districts:2,covered:1,unknown:1,high:0,fully_covered:0,partial:1,hazard_coverage:{heat:{covered:1,unknown:1,missing_district_ids:['NAGPUR']}}});`);
+  const card=app.elements.get('hazard-coverage').children[0];
+  card.children.at(-1).onclick();
+  assert.equal(app.elements.get('district-rows').children.length,1);
+  assert.match(app.elements.get('result-count').textContent,/missing selected hazard/);
+  app.run(`renderDistrictCoverage({risks:{[today()]:{heat:{score:0}}}})`);
+  const row=app.elements.get('district-coverage').children[0].children[1].children[0];
+  assert.equal(row.children[1].textContent,'0/100');
+  assert.equal(row.children[2].textContent,'Unknown');
+});
+
+test('calendar date has ISO components regardless of locale formatting', () => {
+  const app=setup();
+  assert.match(app.run('today()'),/^\d{4}-\d{2}-\d{2}$/);
+  assert.match(app.run('dateOffset(1)'),/^\d{4}-\d{2}-\d{2}$/);
 });
 
 test('API failure is surfaced instead of parsing an error as success', async () => {

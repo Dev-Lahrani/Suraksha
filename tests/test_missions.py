@@ -1,6 +1,7 @@
 """Finale-facing flows: mission briefing, simulations, installability and safety."""
 import base64
 import pickle
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 from unittest.mock import AsyncMock
 
@@ -25,8 +26,8 @@ def client():
 @pytest.fixture
 def mission_data(clean_pune):
     with SessionLocal() as db:
-        db.add_all([RiskScore(district_id="PUNE",day=date.today(),hazard="heat",score=70,band="high",detail='{"heat_index_c":50,"tmax_c":42}'),
-                    RiskScore(district_id="PUNE",day=date.today()+timedelta(days=1),hazard="heat",score=85,band="high",detail='{"heat_index_c":56,"tmax_c":45}')])
+        db.add_all([RiskScore(district_id="PUNE",day=india_today(),hazard="heat",score=70,band="high",detail='{"heat_index_c":50,"tmax_c":42}'),
+                    RiskScore(district_id="PUNE",day=india_today()+timedelta(days=1),hazard="heat",score=85,band="high",detail='{"heat_index_c":56,"tmax_c":45}')])
         db.commit()
 
 
@@ -79,8 +80,8 @@ def test_pwa_assets_and_api_exclusion(client):
 
 
 def test_yesterday_does_not_drive_tomorrow_advisory():
-    yesterday=(date.today()-timedelta(days=1)).isoformat()
-    context={"risks":{yesterday:{"heat":{"score":99,"band":"high","detail":{}}},date.today().isoformat():{"heat":{"score":10,"band":"low","detail":{}}}}}
+    yesterday=(india_today()-timedelta(days=1)).isoformat()
+    context={"risks":{yesterday:{"heat":{"score":99,"band":"high","detail":{}}},india_today().isoformat():{"heat":{"score":10,"band":"low","detail":{}}}}}
     assert build_hazard_list(context,"en")[0]["score"]==10
 
 
@@ -93,7 +94,7 @@ def test_stop_questions_are_not_unsubscribe_commands():
 
 def test_null_scores_are_not_safe_on_map(client,clean_pune):
     with SessionLocal() as db:
-        db.add(RiskScore(district_id="PUNE",day=date.today(),hazard="air",score=None,band="unknown"))
+        db.add(RiskScore(district_id="PUNE",day=india_today(),hazard="air",score=None,band="unknown"))
         db.commit()
     row=next(r for r in client.get("/api/risk-map").json() if r["id"]=="PUNE")
     assert row["overall"] is None
@@ -126,9 +127,9 @@ def test_ml_per_target_withholding(monkeypatch,clean_pune):
         db.query(ModelRun).filter_by(district_id="PUNE").delete()
         db.add(ModelRun(district_id="PUNE",trained_at="2026-10-03T00:00:00+00:00",payload=base64.b64encode(pickle.dumps({})).decode(),mae_tavg=1,mae_tavg_baseline=2,mae_rain=3,mae_rain_baseline=2))
         db.commit()
-    monkeypatch.setattr(runner,"load_history",lambda _:pd.DataFrame([{"day":(date.today()-timedelta(days=1)).isoformat()}]))
+    monkeypatch.setattr(runner,"load_history",lambda _:pd.DataFrame([{"day":(india_today()-timedelta(days=1)).isoformat()}]))
     monkeypatch.setattr(runner,"climatology_map",lambda _: {})
-    monkeypatch.setattr(runner,"predict",lambda *args,**kwargs:[{"day":date.today().isoformat(),"tavg":30,"precipitation":99}])
+    monkeypatch.setattr(runner,"predict",lambda *args,**kwargs:[{"day":india_today().isoformat(),"tavg":30,"precipitation":99}])
     rows=runner.ml_outlook("PUNE")
     assert rows[0]["tavg"]==30 and rows[0]["precipitation"] is None
     with SessionLocal() as db:

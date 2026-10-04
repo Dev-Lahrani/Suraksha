@@ -1,5 +1,6 @@
 """Watchlist endpoint + ranking logic tests (offline; seeded RiskScore rows)."""
 
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 import json
 
@@ -40,7 +41,7 @@ def seeded_watchlist():
     rows behind (they only clean PUNE). This file runs last alphabetically
     and owns the table, so ranking assertions stay deterministic.
     """
-    today = date.today()
+    today = india_today()
     rows = [
         ("DELHI_NW", today, "heat", 88.0, "high"),
         ("DELHI_NW", today, "air", 40.0, "moderate"),
@@ -84,7 +85,7 @@ def test_watchlist_reason_is_traceable(seeded_watchlist):
     assert top["overall"] == 88.0
     assert "47.5" in top["reason"] and "42.0" in top["reason"]
     # peak day is surfaced for officials
-    assert top["peak_day"] == date.today().isoformat()
+    assert top["peak_day"] == india_today().isoformat()
 
 
 def test_watchlist_hazard_filter(seeded_watchlist):

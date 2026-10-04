@@ -1,6 +1,7 @@
 """Synthetic offline demo data, stored only in a dedicated demo database."""
 
-from datetime import date, timedelta
+from datetime import timedelta
+from suraksha.core.clock import india_today
 
 from suraksha.data.pipeline import _upsert_weather, compute_and_store_risks
 from suraksha.db import Climatology, District, SessionLocal
@@ -26,7 +27,7 @@ def seed_demo() -> None:
             hot = index % 5 == 0
             rainy = index % 7 == 0
             rows.append({
-                "day": (date.today() + timedelta(days=offset)).isoformat(),
+                "day": (india_today() + timedelta(days=offset)).isoformat(),
                 "tavg": 34.0 if hot else 27.0,
                 "tmax": 42.0 if hot else 31.0,
                 "tmin": 25.0,

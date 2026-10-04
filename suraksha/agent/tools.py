@@ -12,6 +12,7 @@ from suraksha.core.anomaly import detect_anomalies
 from suraksha.data.pipeline import latest_pm25
 from suraksha.db import District, RiskScore, SessionLocal, WeatherDay
 from datetime import date, timedelta
+from suraksha.core.clock import india_today
 
 
 def find_district(query: str, db: Session) -> District | None:
@@ -53,7 +54,7 @@ def district_context(district_id: str) -> dict:
         d = db.get(District, district_id)
         if d is None:
             return {}
-        today = date.today()
+        today = india_today()
         risks = (
             db.query(RiskScore)
             .filter(
@@ -141,12 +142,14 @@ def district_context(district_id: str) -> dict:
 
 def build_hazard_list(ctx: dict, language: str) -> list[dict]:
     """Attach playbook actions to the max-severity hazards for advisory building."""
-    today = date.today().isoformat()
+    today = india_today().isoformat()
     hazards: dict[str, dict] = {}
     for day, hs in ctx.get("risks", {}).items():
         if day < today:
             continue  # yesterday's hazard must not drive a forward-looking advisory
         for hazard, res in hs.items():
+            if res.get("score") is None:
+                continue  # unknown must not hide a known zero score
             cur = hazards.get(hazard)
             if cur is None or (res.get("score") or 0) > (cur.get("score") or 0):
                 merged = {"hazard": hazard, **res}
@@ -227,7 +230,7 @@ def watchlist(
     """
     if hazard not in (None, "all", "heat", "flood", "air"):
         raise ValueError(f"unknown hazard '{hazard}'")
-    today = date.today()
+    today = india_today()
     window_end = today + timedelta(days=max(0, days_ahead))
     with SessionLocal() as db:
         q = db.query(RiskScore).filter(

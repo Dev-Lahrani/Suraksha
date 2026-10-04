@@ -12,6 +12,8 @@ failure simply yields no ML rows — the product runs on Open-Meteo forecasts.
 
 from __future__ import annotations
 
+from suraksha.core.clock import india_today
+
 import base64
 import logging
 import pickle
@@ -133,7 +135,7 @@ def ml_outlook(district_id: str, days: int = 5) -> list[dict] | None:
             return None
         clim = climatology_map(district_id)
         latest_day = pd.Timestamp(hist.iloc[-1]["day"]).date()
-        if latest_day < date.today() - timedelta(days=2):
+        if latest_day < india_today() - timedelta(days=2):
             return None
         start = latest_day + timedelta(days=1)
         rows = predict(models, hist, clim, start=start, days=days)

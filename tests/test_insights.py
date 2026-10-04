@@ -2,6 +2,7 @@
 import asyncio
 import csv
 import io
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 from unittest.mock import AsyncMock
 
@@ -26,10 +27,10 @@ def client():
 def insights_data(clean_pune):
     with SessionLocal() as db:
         db.add_all([
-            WeatherDay(district_id="PUNE", day=date.today(), tavg=30, tmax=38, precipitation=0, is_forecast=True),
-            WeatherDay(district_id="PUNE", day=date.today()-timedelta(days=3), tavg=27, tmax=32, precipitation=2, is_forecast=False),
-            RiskScore(district_id="PUNE", day=date.today(), hazard="heat", score=75, band="high", detail='{}'),
-            RiskScore(district_id="PUNE", day=date.today(), hazard="flood", score=0, band="low", detail='{}'),
+            WeatherDay(district_id="PUNE", day=india_today(), tavg=30, tmax=38, precipitation=0, is_forecast=True),
+            WeatherDay(district_id="PUNE", day=india_today()-timedelta(days=3), tavg=27, tmax=32, precipitation=2, is_forecast=False),
+            RiskScore(district_id="PUNE", day=india_today(), hazard="heat", score=75, band="high", detail='{}'),
+            RiskScore(district_id="PUNE", day=india_today(), hazard="flood", score=0, band="low", detail='{}'),
         ])
         db.commit()
 

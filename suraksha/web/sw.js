@@ -1,5 +1,5 @@
 /* App-shell-only cache: warnings and private/API responses are NEVER cached. */
-const CACHE = "suraksha-shell-v3";
+const CACHE = "suraksha-shell-v4";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest", "/icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from suraksha.core.clock import india_today
+
 import io
 from datetime import date
 
@@ -39,7 +41,7 @@ def build_brief(district_id: str) -> bytes:
         story.append(Paragraph("<b>DEMO - synthetic data, not a live warning</b>", sub_style))
     story.append(
         Paragraph(
-            f"{d['name_en']} ({d['state']}) · generated {date.today().isoformat()} · "
+            f"{d['name_en']} ({d['state']}) · generated {india_today().isoformat()} · "
             f"population ≈ {d['population']:,}",
             sub_style,
         )

@@ -24,7 +24,7 @@ const language = () => $("language").value;
 const band = score => score == null ? "unknown" : score >= 60 ? "high" : score >= 25 ? "moderate" : "low";
 const number = value => value == null || !Number.isFinite(value) ? "—" : Math.round(value).toLocaleString("en-IN");
 const decimal = value => value == null || !Number.isFinite(value) ? "—" : value.toFixed(1);
-const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date());
+const today = () => { const parts = new Intl.DateTimeFormat("en", { timeZone: "Asia/Kolkata", year:"numeric", month:"2-digit", day:"2-digit" }).formatToParts(new Date()); const part = type => parts.find(p => p.type === type).value; return `${part("year")}-${part("month")}-${part("day")}`; };
 const dateOffset = offset => { const d = new Date(today() + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + offset); return d.toISOString().slice(0, 10); };
 const escape = text => String(text ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function node(tag, cls, text) { const el = document.createElement(tag); if (cls) el.className = cls; if (text != null) el.textContent = text; return el; }
@@ -40,6 +40,7 @@ function nameFor(d) { return d["name_" + language()] || d.name_en; }
 function setView(view) {
   if (!$("view-" + view)) return;
   state.view = view;
+  if (view === "explore") {state.missingDistricts = null; renderExplorer();}
   document.querySelectorAll(".view").forEach(el => el.hidden = el.id !== "view-" + view);
   document.querySelectorAll("[data-view]").forEach(el => el.classList.toggle("active", el.dataset.view === view));
   const titles = { overview: "Overview", explore: "District explorer", saved: "Saved districts", compare: "Compare districts", preparedness: "Preparedness", scenario: "What-if lab" };
@@ -57,6 +58,13 @@ function populateRegistry() {
 async function refresh() {
   const generation = ++state.refreshGeneration;
   $("refresh").disabled = true;
+  // Never relabel old scores as the newly selected date while requests run.
+  state.risks = []; renderPlot(); renderExplorer(); renderSaved();
+  $("metrics").replaceChildren(node("p", "empty", "Loading selected-day metrics…"));
+  $("hazard-coverage").replaceChildren(node("p", "empty", "Checking hazard coverage…"));
+  $("coverage-summary").textContent = "Checking";
+  $("map-coverage").textContent = "Loading";
+  $("watchlist-list").replaceChildren(node("p", "empty", "Loading next-48-hour signals…"));
   const results = await Promise.allSettled([api("/api/health"), api(`/api/overview?day=${state.day}`), api(`/api/risk-map?day=${state.day}`), api(`/api/watchlist?limit=6&hazard=${state.hazard}`)]);
   if (generation !== state.refreshGeneration) return;
   const [health, metrics, risks, watchlist] = results;
@@ -72,9 +80,18 @@ async function refresh() {
   } else $("connection").lastChild.textContent = " Connection unavailable";
   if (metrics.status === "fulfilled") renderMetrics(metrics.value);
   if (risks.status === "fulfilled") { state.risks = risks.value; renderPlot(); renderExplorer(); renderSaved(); }
+  if (metrics.status === "rejected") {
+    $("metrics").replaceChildren(node("p", "empty", "Selected-day metrics unavailable."));
+    $("hazard-coverage").replaceChildren(node("p", "empty", "Coverage unavailable. Retry refresh."));
+    $("coverage-summary").textContent = "Unavailable";
+  }
+  if (risks.status === "rejected") $("map-coverage").textContent = "Scores unavailable";
   if (watchlist.status === "fulfilled") renderWatchlist(watchlist.value);
-  $("error-banner").hidden = results.every(r => r.status === "fulfilled");
-  $("error-banner").textContent = "Some data could not be refreshed. Previous results may be stale. Retry with the refresh button.";
+  else $("watchlist-list").replaceChildren(node("p", "empty", "Watchlist unavailable. Retry refresh."));
+  const complete = results.every(r => r.status === "fulfilled") && state.districts.length > 0;
+  $("retrieval-status").textContent = `${complete ? "API results retrieved" : "Incomplete retrieval"} at ${new Intl.DateTimeFormat("en-IN", {timeStyle:"medium",timeZone:"Asia/Kolkata"}).format(new Date())} IST · source update time is not tracked; freshness is unverified.`;
+  $("error-banner").hidden = complete;
+  $("error-banner").textContent = "Some data could not be refreshed. Unavailable scores are shown as unknown, not safe. Retry with the refresh button.";
   $("refresh").disabled = false;
 }
 function renderMetrics(data) {
@@ -89,6 +106,13 @@ function renderMetrics(data) {
     const article = node("article", "metric " + cls); article.append(node("span", "", title), node("span", "metric-icon", icon), node("strong", "", value), node("small", "", caption)); return article;
   }));
   $("map-coverage").textContent = `${data.covered} / ${data.districts} scored`;
+  $("coverage-summary").textContent = `${data.fully_covered ?? 0} complete · ${data.partial ?? 0} partial`;
+  $("hazard-coverage").replaceChildren(...Object.keys(HAZARDS).map(h => {
+    const coverage = data.hazard_coverage?.[h]; const card = node("article", "coverage-item");
+    card.append(node("h3", "", HAZARDS[h]), node("strong", "", coverage ? `${coverage.covered}/${data.districts}` : "—"), node("p", "muted", coverage ? `${coverage.unknown} districts unknown · ${data.day}` : "Coverage unavailable"));
+    if (coverage?.unknown) { const button = node("button", "text-button", "Inspect missing districts →"); button.onclick = () => { $("search").value=""; $("state-filter").value=""; $("band-filter").value=""; setView("explore"); state.missingDistricts = new Set(coverage.missing_district_ids); renderExplorer(); }; card.append(button); }
+    return card;
+  }));
 }
 function renderPlot() {
   const ns = "http://www.w3.org/2000/svg";
@@ -121,9 +145,9 @@ function renderWatchlist(rows) {
 function scoreChip(score) { const chip = node("span", "score-chip " + band(score)); chip.append(node("span", "", number(score)), node("span", "", band(score) === "unknown" ? "No data" : band(score))); return chip; }
 function renderExplorer() {
   const search = $("search").value.trim().toLocaleLowerCase();
-  const rows = state.districts.filter(d => Object.values(d).some(v => typeof v === "string" && v.toLocaleLowerCase().includes(search)) && (!$("state-filter").value || d.state === $("state-filter").value) && (!$("band-filter").value || band(overall(riskFor(d.id))) === $("band-filter").value));
+  const rows = state.districts.filter(d => (!state.missingDistricts || state.missingDistricts.has(d.id)) && Object.values(d).some(v => typeof v === "string" && v.toLocaleLowerCase().includes(search)) && (!$("state-filter").value || d.state === $("state-filter").value) && (!$("band-filter").value || band(overall(riskFor(d.id))) === $("band-filter").value));
   rows.sort((a,b) => $("sort").value === "name" ? a.name_en.localeCompare(b.name_en) : $("sort").value === "state" ? a.state.localeCompare(b.state) || a.name_en.localeCompare(b.name_en) : (overall(riskFor(b.id)) ?? -1) - (overall(riskFor(a.id)) ?? -1));
-  $("result-count").textContent = `${rows.length} districts · ${state.day}`;
+  $("result-count").textContent = `${rows.length} districts · ${state.day}${state.missingDistricts ? " · missing selected hazard (change a filter to reset)" : ""}`;
   $("district-rows").replaceChildren();
   rows.forEach(d => {
     const row = node("tr"); const name = node("td"); const open = node("button", "", nameFor(d)); open.onclick = () => openDistrict(d.id); name.append(open, node("small", "", d.state)); row.append(name);
@@ -194,7 +218,8 @@ async function openDistrict(id) {
   state.selected = id; state.context = null; state.mission = null; const generation = ++state.generation;
   $("district-drawer").hidden = false; $("drawer-backdrop").hidden = false; document.body.style.overflow = "hidden";
   $("d-name").textContent = "Loading district…"; $("d-sub").textContent = ""; $("advisory").textContent = "Loading grounded guidance…";
-  ["district-badges", "anomalies", "forecast-chart", "forecast-table", "history-chart", "history-table", "mission-content"].forEach(id => $(id).replaceChildren());
+  ["district-badges", "anomalies", "forecast-chart", "forecast-table", "history-chart", "history-table", "mission-content", "district-coverage"].forEach(id => $(id).replaceChildren());
+  $("district-quality").textContent = "Checking availability…";
   $("ml-note").hidden = true; selectTab("advisory"); updateSaveButton();
   const url = new URL(location.href); url.searchParams.set("district", id); history.replaceState(null, "", url);
   try {
@@ -209,8 +234,19 @@ async function openDistrict(id) {
     drawChart("forecast-chart", ctx.forecast, ["tavg", "precipitation"]); renderDataTable("forecast-table", ctx.forecast);
     const known = Object.values(risks).filter(r => r.score != null).length;
     $("district-quality").textContent = `${known}/3 hazards scored today · ${ctx.forecast.length}/7 forecast days. Availability is not accuracy. ${state.demo ? "Synthetic demo data." : "Check official warnings."}`;
+    renderDistrictCoverage(ctx);
     loadMl(id, generation); $("close-district").focus();
   } catch { if (generation === state.generation) { $("d-name").textContent = "District unavailable"; $("advisory").textContent = "Could not load district data. Close this panel and try again."; } }
+}
+function renderDistrictCoverage(ctx) {
+  const table = node("table", "data-table"); const head = node("thead"), heading = node("tr");
+  ["Next 7 days", ...Object.values(HAZARDS)].forEach(text => heading.append(node("th", "", text))); head.append(heading); table.append(head);
+  const body = node("tbody");
+  for (let offset = 0; offset < 7; offset++) {
+    const day = dateOffset(offset), row = node("tr"); row.append(node("td", "", day));
+    Object.keys(HAZARDS).forEach(h => { const score = ctx.risks[day]?.[h]?.score; row.append(node("td", score == null ? "unknown" : band(score), score == null ? "Unknown" : `${number(score)}/100`)); }); body.append(row);
+  }
+  table.append(body); $("district-coverage").replaceChildren(table);
 }
 function closeDistrict() {
   if ($("district-drawer").hidden) return;
@@ -319,7 +355,7 @@ async function runScenario() {
 function bind() {
   document.querySelectorAll("[data-view]").forEach(el => el.onclick = () => setView(el.dataset.view));
   $("refresh").onclick = refresh; $("explore-all").onclick = () => setView("explore"); $("saved-all").onclick = () => setView("saved");
-  ["search","state-filter","band-filter","sort"].forEach(id => $(id).addEventListener(id === "search" ? "input" : "change",renderExplorer));
+  ["search","state-filter","band-filter","sort"].forEach(id => $(id).addEventListener(id === "search" ? "input" : "change", () => {state.missingDistricts = null; renderExplorer();}));
   document.querySelectorAll("[data-hazard]").forEach(el => el.onclick = () => { state.hazard = el.dataset.hazard; document.querySelectorAll("[data-hazard]").forEach(b => b.classList.toggle("active",b===el)); renderPlot(); refresh(); });
   $("risk-day").onchange = () => { state.day = $("risk-day").value; refresh(); };
   $("language").onchange = () => { store.write("language",language()); renderExplorer(); if(state.selected) openDistrict(state.selected); if(state.view === "preparedness") loadPreparedness(); if(state.view === "compare") loadCompare(); };

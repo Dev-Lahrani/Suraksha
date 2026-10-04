@@ -9,6 +9,7 @@ Covers:
 import base64
 import json
 import pickle
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -33,7 +34,7 @@ def api_client():
 def seeded_pune_risks():
     """A few recent PUNE risk rows (mirrors the fixture in test_app.py)."""
     with SessionLocal() as db:
-        today = date.today()
+        today = india_today()
         for k in range(3):
             day = today - timedelta(days=k)
             for hazard, score, band in (
@@ -95,7 +96,7 @@ def _seed_history(district_id="PUNE", days=400):
         d = start + timedelta(days=i)
         rows.append({"day": d.isoformat(), "tavg": 26.0, "precipitation": 0.5})
     compute_climatology(district_id, pd.DataFrame(rows))
-    rng_days = [date.today() - timedelta(days=k) for k in range(days, 0, -1)]
+    rng_days = [india_today() - timedelta(days=k) for k in range(days, 0, -1)]
     with SessionLocal() as db:
         for d in rng_days:
             db.add(

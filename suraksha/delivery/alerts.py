@@ -9,6 +9,8 @@ marked as alerted, and the whole sweep is idempotent thanks to the
 
 from __future__ import annotations
 
+from suraksha.core.clock import india_today
+
 import logging
 from datetime import date, timedelta
 
@@ -39,7 +41,7 @@ def subscribe(session_id: str, district_id: str, language: str = "en") -> None:
                 district_id=district_id,
                 language=language,
                 active=True,
-                created_at=date.today().isoformat(),
+                created_at=india_today().isoformat(),
             )
             db.add(s)
         else:
@@ -125,7 +127,7 @@ async def _alert_one(subscriber_id: str) -> list[str]:
 
         # Dedupe: exact (day, reason) rows already sent, plus any same-reason
         # alert in the last DEDUPE_DAYS so persistent hazards don't spam daily.
-        recent_cutoff = date.today() - timedelta(days=DEDUPE_DAYS)
+        recent_cutoff = india_today() - timedelta(days=DEDUPE_DAYS)
         alerts = db.query(AlertLog).filter(AlertLog.subscriber_id == subscriber_id).all()
         existing = {(a.day, a.reason) for a in alerts}
         recent_reasons = {a.reason for a in alerts if a.day and a.day >= recent_cutoff}
@@ -153,7 +155,7 @@ async def _alert_one(subscriber_id: str) -> list[str]:
             logger.warning("alert send failed for %s; will retry next sweep", subscriber_id)
             return []
 
-        today_iso = date.today().isoformat()
+        today_iso = india_today().isoformat()
         now_iso = _utcnow_iso()
         for day, reason in fresh:
             db.add(
@@ -175,7 +177,7 @@ def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> l
     """High-band risk rows in the lookahead window, formatted like advisory hazards."""
     from suraksha.agent.i18n import playbook_actions
 
-    today = date.today()
+    today = india_today()
     rows = (
         db.query(RiskScore)
         .filter(

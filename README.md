@@ -33,6 +33,7 @@ Run `python -m suraksha doctor` for a local readiness check.
 ## ✨ Headline features
 
 - 🗺️ **Premium climate command center** — responsive dark workspace with a locally rendered geographic HQ risk plot, coverage metrics, hazard filters and a 7-day date selector. Real data in live mode; clearly labelled synthetic data in demo mode.
+- 🔎 **Hazard coverage inspector** — distinguish complete/partial district coverage, drill into missing heat/flood/air scores, and inspect seven-day district coverage. Unknown is never safe; API retrieval time is separated from unverified source freshness.
 - ⭐ **Personal monitoring** — district search, state/risk filters, device-local saved districts, shareable district links and nearest curated HQ lookup.
 - ⇄ **District comparison + exports** — compare 2–4 districts, inspect history/forecast trends, export CSV or download PDF briefs.
 - ☑ **Preparedness workspace** — severity-specific multilingual safety checklists with device-local progress.
@@ -132,7 +133,7 @@ DATA LAYER (hourly cron)          INTELLIGENCE LAYER            AGENT LAYER     
 Open-Meteo forecast ─┐            risk engines (heat/flood/air) LLM (Nugen/OpenAI) ─┐      WhatsApp Cloud API
 Open-Meteo ERA5   ───┼─► SQLite ► climatology & anomalies ► grounded templates ──┼─►   Indic TTS voice notes
 Open-Meteo CAMS AQ ──┘            GBM forecaster (if it beats      chat brain            PDF brief (ReportLab)
-                                  the climatology baseline)       (auto language)  ────┘    MapLibre dashboard
+                                  the climatology baseline)       (auto language)  ────┘    Local SVG dashboard
 ```
 
 - **Backend:** Python, FastAPI, SQLAlchemy, APScheduler, httpx

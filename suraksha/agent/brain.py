@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from suraksha.core.clock import india_today
+
 import logging
 import re
 from datetime import date
@@ -50,7 +52,7 @@ def _get_session(session_id: str) -> ChatSession:
     with SessionLocal() as db:
         s = db.get(ChatSession, session_id)
         if s is None:
-            s = ChatSession(id=session_id, language="en", created_at=date.today().isoformat())
+            s = ChatSession(id=session_id, language="en", created_at=india_today().isoformat())
             db.add(s)
             db.commit()
         return s
@@ -60,7 +62,7 @@ def _set_session(session_id: str, language: str | None = None, district_id: str 
     with SessionLocal() as db:
         s = db.get(ChatSession, session_id)
         if s is None:
-            s = ChatSession(id=session_id, created_at=date.today().isoformat())
+            s = ChatSession(id=session_id, created_at=india_today().isoformat())
             db.add(s)
         if language:
             s.language = language

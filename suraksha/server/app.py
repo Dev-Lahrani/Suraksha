@@ -19,6 +19,7 @@ from suraksha.agent import brain
 from suraksha.agent.i18n import LANGUAGES, detect_language
 from suraksha.agent.tools import advisory_text, district_context, find_district, forecast_text, watchlist
 from suraksha.config import get_settings
+from suraksha.core.clock import india_today
 from suraksha.data.pipeline import run_pipeline
 from suraksha.db import AirQuality, District, RiskScore, SessionLocal, Subscriber, get_db, init_db
 from suraksha.ml.runner import ml_outlook, model_summary
@@ -136,7 +137,7 @@ def blocked_page() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict:
     from suraksha.data.pipeline import pipeline_status
-    return {"status": "ok", "time": date.today().isoformat(), "demo": get_settings().demo_mode,
+    return {"status": "ok", "time": india_today().isoformat(), "demo": get_settings().demo_mode,
             "pipeline": pipeline_status()}
 
 
@@ -165,7 +166,7 @@ def list_districts(db: Session = Depends(get_db)) -> list[dict]:
 @app.get("/api/risk-map")
 def risk_map(day: date | None = None, db: Session = Depends(get_db)) -> list[dict]:
     """Latest risk per district per hazard (for the map; day = YYYY-MM-DD)."""
-    selected_day = day or date.today()
+    selected_day = day or india_today()
     rows = db.query(RiskScore).filter(RiskScore.day == selected_day).all()
     latest: dict[str, dict] = {}
     for r in rows:
@@ -232,7 +233,7 @@ def district_forecast(district_id: str) -> list[dict]:
 
 @app.get("/api/district/{district_id}/air-quality", dependencies=[Depends(known_district)])
 def district_air(district_id: str, db: Session = Depends(get_db)) -> list[dict]:
-    since = (date.today() - timedelta(days=2)).isoformat()
+    since = (india_today() - timedelta(days=2)).isoformat()
     rows = (
         db.query(AirQuality)
         .filter(AirQuality.district_id == district_id, AirQuality.hour >= since)

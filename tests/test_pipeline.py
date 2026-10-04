@@ -1,6 +1,7 @@
 """Pipeline tests with mocked Open-Meteo HTTP responses (fully offline)."""
 
 import json
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 from unittest.mock import patch
 
@@ -12,7 +13,7 @@ from suraksha.db import AirQuality, RiskScore, SessionLocal, WeatherDay
 
 
 def _daily_payload(days: int = 10) -> dict:
-    start = date.today() - timedelta(days=7)
+    start = india_today() - timedelta(days=7)
     times, tmax, tavg, tmin, pr, hum, wind = [], [], [], [], [], [], []
     for i in range(days):
         d = start + timedelta(days=i)
@@ -37,7 +38,7 @@ def _daily_payload(days: int = 10) -> dict:
 
 
 def _aq_payload() -> dict:
-    now = date.today()
+    now = india_today()
     times = [f"{now.isoformat()}T{h:02d}:00" for h in range(24)]
     return {"hourly": {"time": times, "pm2_5": [40.0 + h for h in range(24)], "pm10": [80.0] * 24}}
 
@@ -82,7 +83,7 @@ async def test_run_pipeline_offline(clean_pune):
 @pytest.mark.asyncio
 async def test_upsert_is_idempotent(clean_pune):
     rows = [
-        {"day": date.today().isoformat(), "tavg": 30.0, "tmax": 35.0, "tmin": 24.0,
+        {"day": india_today().isoformat(), "tavg": 30.0, "tmax": 35.0, "tmin": 24.0,
          "precipitation": 10.0, "humidity": 60.0, "wind": 9.0}
     ]
     n1 = pipeline._upsert_weather("PUNE", rows)

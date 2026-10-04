@@ -2,8 +2,8 @@
 
 Interactive OpenAPI documentation: `/docs`. Schema: `/openapi.json`.
 All examples target a running local server. Dates use YYYY-MM-DD. Most backend
-calendar logic currently follows server-local date; deploy the server in IST if
-you need midnight alignment with the frontend (which uses Asia/Kolkata).
+calendar logic uses Asia/Kolkata independently of the server timezone, matching
+the dashboard and Open-Meteo district dates.
 
 ## Public read endpoints
 
@@ -33,6 +33,16 @@ you need midnight alignment with the frontend (which uses Asia/Kolkata).
 Unknown district endpoints return 404. Invalid bounded parameters return 422.
 `null` scores mean unknown, never zero/safe. Partial hazard availability is
 reported explicitly; the overall maximum uses only scored hazards.
+
+### Hazard coverage schema
+
+`GET /api/overview?day=YYYY-MM-DD` additionally returns `fully_covered` (all three
+hazards scored), `partial` (one or two) and `hazard_coverage`. Each `heat`, `flood`
+and `air` entry has `covered`, `unknown` and sorted `missing_district_ids`.
+Zero is a known score; null is unknown. These counts describe stored score
+availability, **not source freshness or model confidence**. Source ingestion
+timestamps are not yet stored per district; the dashboard explicitly labels
+freshness unverified and reports API retrieval time separately.
 
 ## Public action endpoints
 

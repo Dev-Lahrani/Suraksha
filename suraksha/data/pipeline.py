@@ -11,6 +11,7 @@ import httpx
 import pandas as pd
 from sqlalchemy.orm import Session
 
+from suraksha.core.clock import india_today
 from suraksha.core.climatology import climatology_map, compute_climatology, doy_aligned
 from suraksha.core.risks import compute_risk_for_day
 from suraksha.db import AirQuality, District, RiskScore, SessionLocal, WeatherDay
@@ -148,7 +149,7 @@ def _upsert_weather(district_id: str, rows: list[dict]) -> int:
         }
         for r in rows:
             day = date.fromisoformat(r["day"])
-            is_forecast = day >= date.today()
+            is_forecast = day >= india_today()
             w = existing.get(day)
             if w is None:
                 w = WeatherDay(district_id=district_id, day=day)

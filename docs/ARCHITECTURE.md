@@ -44,7 +44,7 @@ caching covers static shell assets only, not API results.
 print credential values. `ingest` and `ask` initialize storage before use.
 
 Use Python 3.11+ and one Uvicorn worker for the SQLite hackathon deployment. Set
-server timezone to IST for calendar alignment. A persistent data volume is needed
+server timezone as desired; district calendar logic explicitly uses IST. A persistent data volume is needed
 to retain observations, subscriptions and models across container replacement.
 Free hosting descriptors are not a promise of durable storage or availability.
 Docker ignores .env, local databases, virtual environments and .git.
@@ -63,7 +63,21 @@ Python fixtures set a disposable DB and disable network-backed optional services
 An isolated subprocess starts a fresh demo with TestClient and exercises registry,
 watchlist, mission brief, chat, comparison, scenario, PDF/CSV and PWA assets.
 Node tests exercise DOM logic and service-worker API exclusions without packages.
-They are not real-browser visual/accessibility tests. Provider integrations are
+An optional real Chromium smoke test exercises the rendered workspace:
+
+```bash
+pip install playwright
+python -m playwright install chromium
+# Start python -m suraksha demo in another terminal, then:
+python tests/browser_smoke.py http://127.0.0.1:8000
+```
+
+It verifies demo labels, coverage drill-down, district/language selection, saved
+state, forecast/history/mission, comparison, checklist, scenario, chat, export
+button targets and PDF/CSV bytes, voice fallback, failed-refresh recovery,
+mobile horizontal overflow and real PWA offline-shell behavior. Screenshots are
+written to a printed system-temp directory. This is not a comprehensive visual
+or accessibility audit. Provider integrations are
 mocked; live availability and WhatsApp setup must be verified separately.
 
 ## Not production claims

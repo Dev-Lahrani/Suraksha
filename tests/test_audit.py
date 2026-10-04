@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 from unittest.mock import AsyncMock
 
@@ -44,8 +45,8 @@ def test_existing_database_upgrade(tmp_path, monkeypatch):
 
 def test_map_uses_today_not_last_forecast(client, clean_pune):
     with SessionLocal() as db:
-        db.add_all([RiskScore(district_id="PUNE", day=date.today(), hazard="heat", score=10, band="low"),
-                    RiskScore(district_id="PUNE", day=date.today() + timedelta(days=6), hazard="heat", score=90, band="high")])
+        db.add_all([RiskScore(district_id="PUNE", day=india_today(), hazard="heat", score=10, band="low"),
+                    RiskScore(district_id="PUNE", day=india_today() + timedelta(days=6), hazard="heat", score=90, band="high")])
         db.commit()
     rows = {r["id"]: r for r in client.get("/api/risk-map").json()}
     assert rows["PUNE"]["overall"] == 10
@@ -111,7 +112,7 @@ def test_format_missing_localized_name():
 
 
 def test_zero_rain_is_scored_and_missing_data_removes_old_risk(clean_pune):
-    rows = [{"day": date.today().isoformat(), "tavg": 25, "tmax": 30, "tmin": 20, "precipitation": 0, "humidity": 50, "wind": 5}]
+    rows = [{"day": india_today().isoformat(), "tavg": 25, "tmax": 30, "tmin": 20, "precipitation": 0, "humidity": 50, "wind": 5}]
     pipeline._upsert_weather("PUNE", rows + rows)
     pipeline.compute_and_store_risks("PUNE")
     with SessionLocal() as db:

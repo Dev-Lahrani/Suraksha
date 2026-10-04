@@ -1,4 +1,28 @@
-# Hackathon audit — 2026-10-03
+# Hackathon audit — 2026-10-04
+
+## Reliability and coverage pass
+
+- Centralized district calendar dates in Asia/Kolkata across ingestion, APIs,
+  advisories, anomalies, alerts, ML freshness checks, PDFs and demo seeding.
+  UTC-hosted servers no longer disagree with the frontend at India midnight.
+- Unknown hazard entries no longer suppress valid zero-score advisory entries.
+- Added per-hazard coverage counts/missing IDs, complete/partial district counts,
+  dashboard missing-data drill-down and seven-day district coverage tables.
+- Refresh clears previous scores before changing date and shows explicit unknown/
+  unavailable states on failed requests. Registry failures also remain visible.
+- Source update timestamps are still not tracked per district. The dashboard
+  reports API retrieval time and explicitly says freshness is unverified.
+- Added real Chromium smoke verification on desktop/mobile, including local
+  synthetic demo flows, export targets/bytes, chat, language changes, voice
+  fallback and real PWA offline shell. This is not exhaustive accessibility or
+  visual verification, nor evidence of live provider delivery.
+- Final checks: 145 Python tests passed under `TZ=UTC`; 2 existing ML tests
+  skipped because degenerate synthetic models were withheld. All 15 Node tests,
+  Python compilation, JavaScript syntax and diff-whitespace checks passed.
+  FastAPI/Starlette emits an existing test-client deprecation warning.
+- Repeatable browser check: `python tests/browser_smoke.py <local demo URL>`;
+  optional Playwright tooling is separate from runtime dependencies.
+
 
 ## Finale demo expansion
 
@@ -101,7 +125,8 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
 5. Geographic plot uses district HQ points, not boundary polygons/base-map
    geography. Plot/chart rendering now uses local SVG with no CDN. Trend series
    are independently scaled and explicitly labelled; consult tables for values.
-   No automated browser visual tests ran (Chrome unavailable).
+   Chromium smoke checks now run on desktop/mobile; screenshot artifacts exist,
+   but exhaustive visual/accessibility auditing is still outstanding.
 6. First ingestion stores only a short recent history; ML normally stays withheld
    until sufficient observations accumulate. Backfill is not implemented. A
    model can beat one target's baseline while losing the other; the losing
@@ -112,7 +137,7 @@ rather than made up. Demo mode refuses a database URL without `demo` in its name
    maximum temperature and mean humidity (not concurrent peak observations).
    Flood is a rainfall proxy, not a hydrological forecast. No official alert
    authority or validated emergency-service product is claimed.
-8. Remaining production work: global IST date handling, authentication for
+8. Remaining production work: per-district source freshness timestamps, authentication for
    public chat identities, quotas/rate limits, distributed pipeline locking,
    persistent audit retention, dependency locking/security scanning and full
    privacy deletion. Admin key/local restriction is not a complete auth system.

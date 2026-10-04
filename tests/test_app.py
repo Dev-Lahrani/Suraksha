@@ -1,5 +1,6 @@
 """FastAPI endpoint tests (offline; uses the seeded test database)."""
 
+from suraksha.core.clock import india_today
 from datetime import date, timedelta
 
 import pytest
@@ -18,7 +19,7 @@ def client():
 @pytest.fixture()
 def seeded_pune_risks():
     with SessionLocal() as db:
-        today = date.today()
+        today = india_today()
         for k in range(3):
             day = today - timedelta(days=k)
             for hazard, score, band in (("heat", 72.0, "high"), ("flood", 35.0, "moderate"), ("air", 55.0, "moderate")):
