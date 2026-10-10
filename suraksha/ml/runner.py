@@ -28,6 +28,7 @@ from suraksha.db import ModelRun, SessionLocal, WeatherDay
 logger = logging.getLogger(__name__)
 
 RETRAIN_AFTER_HOURS = 24  # hourly pipeline must not retrain GBMs every pass
+MIN_HISTORY_DAYS = 90
 
 
 def load_history(district_id: str, max_days: int = 730) -> pd.DataFrame | None:
@@ -43,7 +44,7 @@ def load_history(district_id: str, max_days: int = 730) -> pd.DataFrame | None:
             .limit(max_days)
             .all()
         )
-        if len(rows) < 90:
+        if len(rows) < MIN_HISTORY_DAYS:
             return None
         return pd.DataFrame(
             [

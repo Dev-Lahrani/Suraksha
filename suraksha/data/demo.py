@@ -4,7 +4,7 @@ from datetime import timedelta
 from suraksha.core.clock import india_today
 
 from suraksha.data.pipeline import _upsert_weather, compute_and_store_risks
-from suraksha.db import Climatology, District, SessionLocal
+from suraksha.db import Climatology, District, RiskScore, SessionLocal, WeatherDay
 
 
 def seed_demo() -> None:
@@ -20,6 +20,11 @@ def seed_demo() -> None:
                 if (district.id, doy) not in existing:
                     db.add(Climatology(district_id=district.id, doy=doy,
                                       tavg_normal=27.0, rain_normal=4.0, rain_p90=30.0))
+        # demo.db is reused across days: drop rows outside today's window so an
+        # earlier launch's synthetic days never leak into history, CSV or trends.
+        first, last = india_today() - timedelta(days=7), india_today() + timedelta(days=6)
+        for model in (WeatherDay, RiskScore):
+            db.query(model).filter((model.day < first) | (model.day > last)).delete(synchronize_session=False)
         db.commit()
     for index, district in enumerate(districts):
         rows = []

@@ -9,6 +9,23 @@ import logging
 import sys
 
 
+def _free_port(host: str, port: int) -> int:
+    """Return `port`, or the next free one when another app already holds it."""
+    import socket
+
+    for candidate in range(port, port + 20):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.bind((host, candidate))
+            except OSError:
+                continue
+        if candidate != port:
+            print(f"⚠️  Port {port} is already in use by another program; using {candidate} instead.", file=sys.stderr)
+        return candidate
+    return port
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="suraksha", description="Suraksha early-warning assistant")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -42,7 +59,9 @@ def main(argv: list[str] | None = None) -> int:
         from suraksha.config import get_settings
         get_settings.cache_clear()
         import uvicorn
-        uvicorn.run("suraksha.server.app:app", host=args.host, port=args.port, log_level="info")
+        port = _free_port(args.host, args.port)
+        print(f"Suraksha demo → http://localhost:{port}")
+        uvicorn.run("suraksha.server.app:app", host=args.host, port=port, log_level="info")
         return 0
 
     if args.command == "doctor":
@@ -91,12 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         # The scheduler is started inside the FastAPI lifespan (it needs a
         # running event loop); uvicorn owns the loop.
         s = get_settings()
-        uvicorn.run(
-            "suraksha.server.app:app",
-            host=args.host or s.host,
-            port=args.port or s.port,
-            log_level="info",
-        )
+        host = args.host or s.host
+        port = _free_port(host, args.port or s.port)
+        print(f"Suraksha → http://localhost:{port}")
+        uvicorn.run("suraksha.server.app:app", host=host, port=port, log_level="info")
         return 0
 
     if args.command == "ask":

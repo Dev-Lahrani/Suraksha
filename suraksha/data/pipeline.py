@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -21,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 CLIMATOLOGY_START = date(1995, 1, 1)
 CLIMATOLOGY_END = date(2024, 12, 31)
+# Forecast API serves up to 92 past days (the oldest ones can be empty).
+OBSERVED_DAYS = 92
+HISTORY_BACKFILL_DAYS = 400
+# After the archive exhausts its retries, skip it for a while instead of
+# queueing every remaining district behind the same rate limit.
+ARCHIVE_COOLDOWN_SECONDS = 600
+_archive_retry_at = 0.0
 
 
 _pipeline_running = False
@@ -71,13 +79,22 @@ async def _run_pipeline(force: bool = False) -> dict:
         async def guarded(d: dict) -> dict | None:
             async with sem:
                 try:
-                    return await _ingest_district(client, d, force=force)
+                    return await _ingest_district(client, d)
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("ingest failed for %s", d["id"])
                     errors.append(f"{d['id']}: {exc}")
                     return None
 
+        # Phase 1 — current weather, air quality and scores for every district.
         results = await asyncio.gather(*(guarded(d) for d in district_list))
+        # Phase 2 — climatology, history backfill and ML. The archive API is
+        # serialized and often rate limited, so it never delays phase 1.
+        for d, res in zip(district_list, results):
+            if res:
+                try:
+                    await _enrich_district(client, d, res, force=force)
+                except Exception:  # noqa: BLE001 — enhancement only
+                    logger.exception("enrichment failed for %s", d["id"])
 
     for res in results:
         if not res:
@@ -100,24 +117,17 @@ async def _run_pipeline(force: bool = False) -> dict:
     return summary
 
 
-async def _ingest_district(client: httpx.AsyncClient, d: dict, force: bool) -> dict:
-    """Ingest one district: forecast, AQ, (climatology if missing), risk scores."""
-    # 1. Climatology (once per district)
-    with SessionLocal() as db:
-        from suraksha.db import Climatology  # local import avoids cycles
+async def _ingest_district(client: httpx.AsyncClient, d: dict) -> dict:
+    """Phase 1 for one district: forecast, AQ and risk scores.
 
-        has_clim = db.query(Climatology).filter(Climatology.district_id == d["id"]).count() > 0
-    if force or not has_clim:
-        hist = await fetch_archive(client, d["lat"], d["lon"], CLIMATOLOGY_START, CLIMATOLOGY_END)
-        df = pd.DataFrame(hist["rows"])
-        df = df.rename(columns={"tavg": "tavg", "precipitation": "precipitation"})
-        compute_climatology(d["id"], df[["day", "tavg", "precipitation"]])
-
-    # 2. Weather: past 7 obs + 7-day forecast
-    wx = await fetch_forecast(client, d["lat"], d["lon"], days=7, past_days=7)
+    Flood scoring uses a default heavy-rain threshold until the district's
+    climatology exists; `_enrich_district` re-scores once it lands.
+    """
+    # 1. Weather: recent observations + 7-day forecast
+    wx = await fetch_forecast(client, d["lat"], d["lon"], days=7, past_days=OBSERVED_DAYS)
     weather_rows = _upsert_weather(d["id"], wx["rows"])
 
-    # 3. Air quality (last 48h hourly)
+    # 2. Air quality (last 48h hourly)
     try:
         aq = await fetch_pm25(client, d["lat"], d["lon"], past_days=2)
         aq_rows = _upsert_aq(d["id"], aq)
@@ -125,20 +135,66 @@ async def _ingest_district(client: httpx.AsyncClient, d: dict, force: bool) -> d
         logger.warning("AQ ingest failed for %s: %s", d["id"], exc)
         aq_rows = 0
 
-    # 4. Risk scores
+    # 3. Risk scores
     scored = compute_and_store_risks(d["id"])
 
-    # 5. ML forecaster (optional enhancement — never blocks the pipeline)
-    from suraksha.ml.runner import run_forecaster
+    return {"weather_rows": weather_rows, "aq_rows": aq_rows, "scored": scored, "ml_trained": False}
 
-    ml_trained = run_forecaster(d["id"])
 
-    return {
-        "weather_rows": weather_rows,
-        "aq_rows": aq_rows,
-        "scored": scored,
-        "ml_trained": ml_trained,
-    }
+async def _enrich_district(client: httpx.AsyncClient, d: dict, res: dict, force: bool) -> None:
+    """Phase 2 for one district: climatology (once), observed-history backfill, ML."""
+    global _archive_retry_at
+    from suraksha.db import Climatology  # local import avoids cycles
+    from suraksha.ml.runner import MIN_HISTORY_DAYS, run_forecaster
+
+    with SessionLocal() as db:
+        has_clim = db.query(Climatology).filter(Climatology.district_id == d["id"]).count() > 0
+        observed = db.query(WeatherDay).filter(
+            WeatherDay.district_id == d["id"], WeatherDay.is_forecast.is_(False),
+            WeatherDay.tavg.isnot(None), WeatherDay.precipitation.isnot(None)).count()
+    need_clim = force or not has_clim
+    # The forecast API's past days start with gaps, so the forecaster's history
+    # comes from the tail of the archive (one request serves both needs).
+    need_history = observed < MIN_HISTORY_DAYS + 30
+    if (need_clim or need_history) and time.monotonic() >= _archive_retry_at:
+        yesterday = india_today() - timedelta(days=1)
+        start = CLIMATOLOGY_START if need_clim else yesterday - timedelta(days=HISTORY_BACKFILL_DAYS)
+        try:
+            hist = await fetch_archive(client, d["lat"], d["lon"], start, yesterday)
+        except Exception as exc:  # noqa: BLE001 — retried on a later pass
+            _archive_retry_at = time.monotonic() + ARCHIVE_COOLDOWN_SECONDS
+            logger.warning("archive unavailable for %s (%s); keeping default-threshold scores", d["id"], exc)
+        else:
+            if need_clim:
+                df = pd.DataFrame(hist["rows"])
+                df = df[df["day"] <= CLIMATOLOGY_END.isoformat()]
+                await asyncio.to_thread(compute_climatology, d["id"], df[["day", "tavg", "precipitation"]])
+                has_clim = True
+            _backfill_observed(d["id"], hist["rows"][-HISTORY_BACKFILL_DAYS:])
+            res["scored"] = compute_and_store_risks(d["id"])
+
+    # ML forecaster (optional enhancement — never blocks the pipeline).
+    # Anomaly targets are meaningless without the district's own normals.
+    if has_clim:
+        res["ml_trained"] = await asyncio.to_thread(run_forecaster, d["id"])
+
+
+def _backfill_observed(district_id: str, rows: list[dict]) -> int:
+    """Add archive days that are not stored yet; never overwrite fresher rows."""
+    added = 0
+    with SessionLocal() as db:
+        known = {day for (day,) in db.query(WeatherDay.day).filter(WeatherDay.district_id == district_id)}
+        for r in rows:
+            day = date.fromisoformat(r["day"])
+            # ERA5 lags a few days: its newest rows are empty.
+            if day in known or day >= india_today() or r["tavg"] is None or r["precipitation"] is None:
+                continue
+            db.add(WeatherDay(district_id=district_id, day=day, tavg=r["tavg"], tmax=r["tmax"], tmin=r["tmin"],
+                              precipitation=r["precipitation"], humidity=r["humidity"], wind=r["wind"],
+                              is_forecast=False))
+            added += 1
+        db.commit()
+    return added
 
 
 def _upsert_weather(district_id: str, rows: list[dict]) -> int:

@@ -18,25 +18,36 @@ from suraksha.config import get_settings
 
 logger = logging.getLogger(__name__)
 
+# Neural TTS for a full advisory takes tens of seconds; replay repeats instantly.
+_CACHE_SIZE = 32
+_cache: dict[tuple[str, str], bytes] = {}
+
 
 async def synthesize(text: str, language: str = "en") -> tuple[bytes, bool]:
     """Return (audio_bytes, is_real_tts). Never raises."""
     voice = _voice_for(language)
     if voice:
+        cached = _cache.get((voice, text))
+        if cached:
+            return cached, True
         try:
             import edge_tts  # optional dependency
 
             communicate = edge_tts.Communicate(text, voice)
             buf = io.BytesIO()
-            async with asyncio.timeout(15):
+            # A full Indic advisory can need 30s+ to stream; the web client waits 45s.
+            async with asyncio.timeout(40):
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
                         buf.write(chunk["data"])
             data = buf.getvalue()
             if data:
+                if len(_cache) >= _CACHE_SIZE:
+                    _cache.pop(next(iter(_cache)))
+                _cache[(voice, text)] = data
                 return data, True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("edge-tts failed (%s); using offline WAV fallback", exc)
+            logger.warning("edge-tts failed (%s); using offline WAV fallback", exc or type(exc).__name__)
     return _silent_wav(text), False
 
 

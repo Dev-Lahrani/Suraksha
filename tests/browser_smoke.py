@@ -43,9 +43,12 @@ def main():
         expect(page.locator("#d-name")).to_have_text("पुणे")
         page.locator("#language").select_option("en")
         expect(page.locator("#d-name")).to_have_text("Pune")
+        # Force the server's no-TTS fallback so the result doesn't depend on edge-tts network reachability.
+        page.route("**/voice?*", lambda route: route.fulfill(status=200, body="", headers={"X-TTS-Engine": "fallback"}))
         page.locator("#voice").click()
         expect(page.locator("#voice")).to_be_enabled(timeout=30000)
         expect(page.locator("#toast")).to_contain_text(re.compile("device|Voice unavailable", re.I), timeout=30000)
+        page.unroute("**/voice?*")
         page.get_by_role("tab", name="Forecast", exact=True).click()
         expect(page.locator("#forecast-table tbody tr")).to_have_count(7)
         page.get_by_role("tab", name="History", exact=True).click()
