@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 from sqlalchemy import (
+    event,
     Boolean,
     Column,
     Date,
@@ -88,7 +89,7 @@ class AirQuality(Base):
     __tablename__ = "air_quality"
     id = Column(Integer, primary_key=True, autoincrement=True)
     district_id = Column(String, ForeignKey("districts.id"), nullable=False)
-    hour = Column(String, nullable=False)  # ISO timestamp (UTC)
+    hour = Column(String, nullable=False)  # naive ISO timestamp, Asia/Kolkata (IST)
     pm25 = Column(Float)
     pm10 = Column(Float)
     __table_args__ = (UniqueConstraint("district_id", "hour", name="uq_aq"),)
@@ -156,6 +157,17 @@ engine = create_engine(
     if get_settings().database_url.startswith("sqlite")
     else {},
 )
+
+
+if engine.dialect.name == "sqlite":
+    @event.listens_for(engine, "connect")
+    def _sqlite_pragmas(dbapi_conn, _):  # concurrent pipeline threads + requests
+        cur = dbapi_conn.cursor()
+        cur.execute("PRAGMA journal_mode=WAL")
+        cur.execute("PRAGMA busy_timeout=15000")
+        cur.close()
+
+
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

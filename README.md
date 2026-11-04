@@ -54,7 +54,7 @@ Run `python -m suraksha doctor` for a local readiness check.
 ```bash
 cd suraksha
 python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements-dev.txt
 
 # 1. Create the database and seed 40 districts
 python -m suraksha init-db

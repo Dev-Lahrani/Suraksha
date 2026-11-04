@@ -55,6 +55,9 @@ def heat_score(tmax: float | None, tavg: float | None, humidity: float | None) -
     else:
         score = _clamp((hi - 30) * 2.5)
     detail = {"heat_index_c": round(hi, 1), "tmax_c": tmax, "rh_pct": rh}
+    if humidity is None:
+        # Daily-mean RH also understates afternoon humidity; flag degraded input.
+        detail["humidity_assumed"] = True
     return {"score": round(score, 1), "band": band(score), "detail": detail}
 
 
@@ -104,7 +107,8 @@ def aqi_from_pm25(pm25: float) -> int:
 
 
 def air_score(pm25: float | None) -> dict[str, Any]:
-    """Air-quality emergency risk from latest PM2.5."""
+    """Air-quality risk from PM2.5. Score = AQI/2, so AQI 120 (unhealthy for
+    sensitive groups) already reaches the "high" band (>=60); AQI 200 => 100."""
     if pm25 is None:
         return {"score": None, "band": "unknown", "detail": {"reason": "no AQ data"}}
     aqi = aqi_from_pm25(pm25)

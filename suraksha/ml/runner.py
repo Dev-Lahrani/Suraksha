@@ -15,6 +15,8 @@ from __future__ import annotations
 from suraksha.core.clock import india_today
 
 import base64
+import hashlib
+import hmac
 import logging
 import pickle
 from datetime import date, datetime, timedelta, timezone
@@ -29,6 +31,29 @@ logger = logging.getLogger(__name__)
 
 RETRAIN_AFTER_HOURS = 24  # hourly pipeline must not retrain GBMs every pass
 MIN_HISTORY_DAYS = 90
+
+
+def _signing_key() -> bytes:
+    from suraksha.config import get_settings
+
+    s = get_settings()
+    return (s.model_signing_key or s.admin_api_key or "suraksha-local-dev-key").encode()
+
+
+def _dump_models(models: dict) -> str:
+    """base64(pickle) prefixed by an HMAC so tampered DB rows are never unpickled."""
+    blob = pickle.dumps(models)
+    mac = hmac.new(_signing_key(), blob, hashlib.sha256).hexdigest()
+    return mac + "." + base64.b64encode(blob).decode("ascii")
+
+
+def _load_models(payload: str) -> dict:
+    mac, _, b64 = payload.partition(".")
+    blob = base64.b64decode(b64)
+    expected = hmac.new(_signing_key(), blob, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(mac, expected):
+        raise ValueError("model payload signature mismatch")
+    return pickle.loads(blob)  # noqa: S301 - authenticated above
 
 
 def load_history(district_id: str, max_days: int = 730) -> pd.DataFrame | None:
@@ -89,7 +114,7 @@ def run_forecaster(district_id: str) -> bool:
                 mae["mae_rain_t1"], mae["mae_baseline_rain_t1"],
             )
             return False
-        payload = base64.b64encode(pickle.dumps(models)).decode("ascii")
+        payload = _dump_models(models)
         with SessionLocal() as db:
             run = db.get(ModelRun, district_id)
             if run is None:
@@ -130,7 +155,7 @@ def ml_outlook(district_id: str, days: int = 5) -> list[dict] | None:
             run = db.get(ModelRun, district_id)
         if run is None:
             return None
-        models = pickle.loads(base64.b64decode(run.payload))
+        models = _load_models(run.payload)
         hist = load_history(district_id)
         if hist is None:
             return None

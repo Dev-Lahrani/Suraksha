@@ -62,25 +62,41 @@ def unsubscribe(session_id: str) -> bool:
         return True
 
 
-async def sweep_subscribers() -> dict:
-    """One pass over all active subscribers: push new alerts, log, dedupe."""
+async def _deliver(subscriber_id: str, text: str) -> bool:
+    """Template message when configured (works outside the 24h window), else text."""
+    from suraksha.config import get_settings
+
+    s = get_settings()
+    if s.whatsapp_alert_template:
+        return await whatsapp.send_template(
+            subscriber_id, s.whatsapp_alert_template, s.whatsapp_alert_template_lang, [text])
+    return await whatsapp.send_text(subscriber_id, text)
+
+
+async def sweep_subscribers(dry_run: bool = False) -> dict:
+    """One pass over all active subscribers: push new alerts, log, dedupe.
+
+    dry_run previews who would be alerted and why, without sending or logging.
+    """
     with SessionLocal() as db:  # type: Session
         subs = db.query(Subscriber).filter(Subscriber.active.is_(True)).all()
-        sub_ids = [s.id for s in subs]
+        all_ids = [s.id for s in subs]
+        sub_ids = [i for i in all_ids if whatsapp.is_whatsapp_id(i)]
+        undeliverable = len(all_ids) - len(sub_ids)
 
     if not sub_ids:
-        return {"subscribers": 0, "alerted": 0, "reasons": [], "skipped": 0}
+        return {"subscribers": 0, "alerted": 0, "reasons": [], "skipped": 0, "undeliverable": undeliverable}
 
-    if not whatsapp.configured():
+    if not whatsapp.configured() and not dry_run:
         logger.info("alert sweep skipped: WhatsApp not configured (%d subscribers)", len(sub_ids))
-        return {"subscribers": len(sub_ids), "alerted": 0, "reasons": [], "skipped": len(sub_ids)}
+        return {"subscribers": len(sub_ids), "alerted": 0, "reasons": [], "skipped": len(sub_ids), "undeliverable": undeliverable}
 
     alerted = 0
     skipped = 0
     reasons_sent: list[str] = []
     for sid in sub_ids:
         try:
-            sent = await _alert_one(sid)
+            sent = await _alert_one(sid, dry_run)
         except Exception:  # noqa: BLE001 — one bad subscriber must not stop the sweep
             logger.exception("alert sweep failed for subscriber %s", sid)
             skipped += 1
@@ -97,10 +113,12 @@ async def sweep_subscribers() -> dict:
         "alerted": alerted,
         "reasons": reasons_sent,
         "skipped": skipped,
+        "undeliverable": undeliverable,
+        "dry_run": dry_run,
     }
 
 
-async def _alert_one(subscriber_id: str) -> list[str]:
+async def _alert_one(subscriber_id: str, dry_run: bool = False) -> list[str]:
     """Build + send one subscriber's alert. Returns the reasons that were pushed."""
     with SessionLocal() as db:  # type: Session
         s = db.get(Subscriber, subscriber_id)
@@ -150,25 +168,25 @@ async def _alert_one(subscriber_id: str) -> list[str]:
         from suraksha.agent.i18n import format_alert
 
         text = format_alert(district, hazards, anomalies, lang)
-        ok = await whatsapp.send_text(subscriber_id, text)
-        if not ok:
-            logger.warning("alert send failed for %s; will retry next sweep", subscriber_id)
-            return []
+        if dry_run:
+            return [f"{day.isoformat()}:{reason}" for day, reason in fresh]
 
-        today_iso = india_today().isoformat()
+        # Record first, send second: a crash after a successful send can then
+        # never re-alert; a failed send removes the rows so the next sweep retries.
         now_iso = _utcnow_iso()
-        for day, reason in fresh:
-            db.add(
-                AlertLog(
-                    subscriber_id=subscriber_id,
-                    district_id=s.district_id,
-                    day=day,
-                    reason=reason,
-                    channel="whatsapp",
-                    sent_at=now_iso,
-                )
-            )
-        s.last_alerted_day = today_iso
+        logs = [AlertLog(subscriber_id=subscriber_id, district_id=s.district_id, day=day,
+                         reason=reason, channel="whatsapp", sent_at=now_iso) for day, reason in fresh]
+        db.add_all(logs)
+        db.commit()
+        ok = await _deliver(subscriber_id, text)
+        if not ok:
+            logger.error("alert send FAILED for %s (district %s); will retry next sweep",
+                         subscriber_id, s.district_id)
+            for log in logs:
+                db.delete(log)
+            db.commit()
+            return []
+        s.last_alerted_day = india_today().isoformat()
         db.commit()
         return [f"{day.isoformat()}:{reason}" for day, reason in fresh]
 

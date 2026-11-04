@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -21,11 +22,12 @@ from suraksha.agent.tools import advisory_text, district_context, find_district,
 from suraksha.config import get_settings
 from suraksha.core.clock import india_today
 from suraksha.data.pipeline import run_pipeline
-from suraksha.db import AirQuality, District, RiskScore, SessionLocal, Subscriber, get_db, init_db
+from suraksha.db import AirQuality, AlertLog, District, RiskScore, SessionLocal, Subscriber, get_db, init_db
 from suraksha.ml.runner import ml_outlook, model_summary
 from suraksha.delivery import voice, whatsapp
 from suraksha.delivery.alerts import subscribe, sweep_subscribers, unsubscribe
 from suraksha.delivery.pdf_brief import build_brief
+from suraksha.server.ratelimit import rate_limited
 from suraksha.server.scheduler import start_scheduler, stop_scheduler
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,10 @@ async def lifespan(_: FastAPI):
     # place that is guaranteed to have one (starting it from the CLI crashes
     # with "no running event loop" because uvicorn creates the loop later).
     settings = get_settings()
+    if not settings.admin_api_key and not settings.demo_mode:
+        logger.warning("ADMIN_API_KEY is not set: admin endpoints only accept direct loopback requests")
+    if int(os.environ.get("WEB_CONCURRENCY", "1") or 1) > 1:
+        logger.warning("Multiple workers configured; the scheduler, pipeline lock and caches assume ONE worker")
     if settings.demo_mode:
         from suraksha.data.demo import seed_demo
         seed_demo()
@@ -85,8 +91,16 @@ def require_admin(request: Request) -> None:
     if key:
         if not hmac.compare_digest(request.headers.get("X-API-Key", ""), key):
             raise HTTPException(401, "Invalid API key")
-    elif request.client and request.client.host not in ("127.0.0.1", "::1", "localhost", "testclient"):
+    elif _proxied(request) or not (request.client and request.client.host in LOOPBACK):
         raise HTTPException(403, "Remote administration requires ADMIN_API_KEY")
+
+
+LOOPBACK = ("127.0.0.1", "::1", "localhost", "testclient")
+
+
+def _proxied(request: Request) -> bool:
+    """A reverse proxy on the same host makes every client look like loopback."""
+    return any(h in request.headers for h in ("x-forwarded-for", "forwarded", "x-real-ip"))
 
 
 def known_district(district_id: str, db: Session = Depends(get_db)) -> None:
@@ -137,8 +151,14 @@ def blocked_page() -> FileResponse:
 @app.get("/api/health")
 def health() -> dict:
     from suraksha.data.pipeline import pipeline_status
+    status = pipeline_status()
+    # Raw errors can contain upstream URLs; keep details in the logs only.
+    status["last_error"] = "see server logs" if status.get("last_error") else None
+    last = status.get("last_run")
+    if isinstance(last, dict):
+        status["last_run"] = {**last, "errors": len(last.get("errors", []))}
     return {"status": "ok", "time": india_today().isoformat(), "demo": get_settings().demo_mode,
-            "pipeline": pipeline_status()}
+            "pipeline": status}
 
 
 @app.get("/api/districts")
@@ -272,7 +292,7 @@ def district_ml_outlook(district_id: str) -> dict:
     }
 
 
-@app.get("/api/district/{district_id}/brief.pdf")
+@app.get("/api/district/{district_id}/brief.pdf", dependencies=[Depends(rate_limited("brief"))])
 def district_brief(district_id: str) -> Response:
     try:
         pdf = build_brief(district_id)
@@ -281,7 +301,7 @@ def district_brief(district_id: str) -> Response:
     return Response(pdf, media_type="application/pdf")
 
 
-@app.post("/api/district/{district_id}/voice", dependencies=[Depends(known_district)])
+@app.post("/api/district/{district_id}/voice", dependencies=[Depends(known_district), Depends(rate_limited("voice"))])
 async def district_voice(district_id: str, lang: str = "hi") -> Response:
     text, language = advisory_text(district_id, lang)
     audio, is_tts = await voice.synthesize(text, language)
@@ -298,9 +318,11 @@ class ChatInput(BaseModel):
     language: str | None = None
 
 
-@app.post("/api/chat")
+@app.post("/api/chat", dependencies=[Depends(rate_limited("chat"))])
 async def chat(body: ChatInput) -> dict:
-    session_id = body.session_id
+    # Web sessions live in their own namespace: a browser can never address a
+    # WhatsApp phone number (subscribe/stop/voice are keyed by session id).
+    session_id = "web:" + body.session_id
     message = body.message
     if not message.strip():
         raise HTTPException(400, "message required")
@@ -382,9 +404,34 @@ def delete_subscriber_hard(subscriber_id: str) -> dict:
 
 
 @app.post("/api/alerts/sweep", dependencies=[Depends(require_admin)])
-async def alerts_sweep() -> dict:
-    """Run the proactive-alert sweep now (normally a daily scheduler job)."""
-    return JSONResponse(await sweep_subscribers())
+async def alerts_sweep(dry_run: bool = False) -> dict:
+    """Run the proactive-alert sweep now (normally a daily scheduler job).
+
+    dry_run=true previews recipients and reasons without sending or logging.
+    """
+    return JSONResponse(await sweep_subscribers(dry_run=dry_run))
+
+
+@app.get("/api/subscribers", dependencies=[Depends(require_admin)])
+def list_subscribers(active: bool | None = None, limit: int = Query(100, ge=1, le=500),
+                     db: Session = Depends(get_db)) -> dict:
+    query = db.query(Subscriber)
+    if active is not None:
+        query = query.filter(Subscriber.active.is_(active))
+    rows = query.order_by(Subscriber.created_at.desc()).limit(limit).all()
+    return {"total": query.count(), "subscribers": [
+        {"id": ("…" + s.id[-4:]) if whatsapp.is_whatsapp_id(s.id) else s.id,  # mask phone numbers
+         "district_id": s.district_id, "language": s.language, "active": s.active,
+         "last_alerted_day": s.last_alerted_day, "deliverable": whatsapp.is_whatsapp_id(s.id)}
+        for s in rows]}
+
+
+@app.get("/api/alerts/log", dependencies=[Depends(require_admin)])
+def alert_log(limit: int = Query(50, ge=1, le=500), db: Session = Depends(get_db)) -> list[dict]:
+    rows = db.query(AlertLog).order_by(AlertLog.id.desc()).limit(limit).all()
+    return [{"district_id": r.district_id, "day": r.day.isoformat(), "reason": r.reason,
+             "channel": r.channel, "sent_at": r.sent_at,
+             "subscriber": "…" + r.subscriber_id[-4:]} for r in rows]
 
 
 # ----------------------------- WhatsApp webhook -----------------------------
@@ -401,31 +448,68 @@ def whatsapp_verify(request: Request):
     raise HTTPException(403, "verification failed")
 
 
+_seen_messages: dict[str, None] = {}
+_background: set[asyncio.Task] = set()
+
+
+def _first_delivery(message_id: str) -> bool:
+    """Meta retries slow webhooks; process each message id once."""
+    if not message_id:
+        return True
+    if message_id in _seen_messages:
+        return False
+    _seen_messages[message_id] = None
+    while len(_seen_messages) > 5000:
+        _seen_messages.pop(next(iter(_seen_messages)))
+    return True
+
+
+async def _reply_to(event: dict) -> bool:
+    try:
+        if event.get("type") == "audio":
+            # Voice note from the user -> reply with the voice advisory flow.
+            reply = await brain.handle_message(event["from"], "voice")
+        else:
+            reply = await brain.handle_message(event["from"], event["text"])
+        return await whatsapp.send_text(event["from"], reply)
+    except Exception:  # noqa: BLE001
+        logger.exception("webhook message handling failed")
+        return False
+
+
 @app.post("/webhook/whatsapp")
 async def whatsapp_incoming(request: Request) -> dict:
     raw = await request.body()
-    secret = get_settings().whatsapp_app_secret
+    settings = get_settings()
+    secret = settings.whatsapp_app_secret
     if whatsapp.configured() and not secret:
         raise HTTPException(503, "WHATSAPP_APP_SECRET required")
     if secret:
         expected = "sha256=" + hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(request.headers.get("X-Hub-Signature-256", ""), expected):
             raise HTTPException(403, "Invalid webhook signature")
+    elif _proxied(request) or not (request.client and request.client.host in LOOPBACK):
+        # Unsigned payloads are only for local testing.
+        raise HTTPException(403, "Webhook signature secret not configured")
     try:
         payload = await request.json()
     except ValueError as exc:
         raise HTTPException(400, "Invalid JSON") from exc
     logger.info("WhatsApp webhook received")
-    event = whatsapp.extract_webhook_event(payload)
-    if not event or not event.get("from"):
+    events = [e for e in whatsapp.extract_webhook_events(payload)
+              if e.get("from") and _first_delivery(e.get("id", ""))]
+    if not events:
         return {"status": "ignored"}
-    if event.get("type") == "audio":
-        # Voice note from the user → reply with the voice advisory flow.
-        reply = await brain.handle_message(event["from"], "voice")
-    else:
-        reply = await brain.handle_message(event["from"], event["text"])
-    ok = await whatsapp.send_text(event["from"], reply)
-    return {"status": "ok" if ok else "send-failed"}
+    if not whatsapp.configured():
+        # Nothing can be sent; handle inline so local demos see the outcome.
+        results = [await _reply_to(e) for e in events]
+        return {"status": "ok" if all(results) else "send-failed"}
+    # Acknowledge fast (LLM/TTS can take a minute) so Meta does not retry.
+    for event in events:
+        task = asyncio.create_task(_reply_to(event))
+        _background.add(task)
+        task.add_done_callback(_background.discard)
+    return {"status": "accepted", "messages": len(events)}
 
 
 # ----------------------------- convenience -----------------------------

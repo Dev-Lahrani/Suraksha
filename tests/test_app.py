@@ -6,6 +6,7 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from suraksha.config import get_settings
 from suraksha.db import RiskScore, SessionLocal
 from suraksha.server.app import app
 
@@ -87,7 +88,8 @@ def test_chat_endpoint(client):
     assert "Pune" in r.json()["reply"]
 
 
-def test_webhook_verification(client):
+def test_webhook_verification(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "whatsapp_verify_token", "suraksha-verify")
     r = client.get(
         "/webhook/whatsapp",
         params={"mode": "subscribe", "token": "suraksha-verify", "challenge": "ABC123"},

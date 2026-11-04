@@ -21,8 +21,16 @@ class Settings(BaseSettings):
     # WhatsApp Cloud API
     whatsapp_token: str = ""
     whatsapp_phone_number_id: str = ""
-    whatsapp_verify_token: str = "suraksha-verify"
+    whatsapp_verify_token: str = ""  # empty disables webhook verification
     whatsapp_app_secret: str = ""
+    # Approved template (one body variable) for proactive alerts. Free-form text
+    # only works inside Meta's 24h customer-service window, so sweeps need this.
+    whatsapp_alert_template: str = ""
+    whatsapp_alert_template_lang: str = "en"
+    # HMAC key protecting pickled ML models stored in the database.
+    model_signing_key: str = ""
+    # Requests per minute per client IP for expensive public endpoints.
+    rate_limit_per_minute: int = 30
     # When set, protects manual ingestion, sweeps and subscription management.
     admin_api_key: str = ""
     demo_mode: bool = False

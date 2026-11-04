@@ -125,7 +125,7 @@ def test_ml_per_target_withholding(monkeypatch,clean_pune):
     from suraksha.ml import runner
     with SessionLocal() as db:
         db.query(ModelRun).filter_by(district_id="PUNE").delete()
-        db.add(ModelRun(district_id="PUNE",trained_at="2026-10-03T00:00:00+00:00",payload=base64.b64encode(pickle.dumps({})).decode(),mae_tavg=1,mae_tavg_baseline=2,mae_rain=3,mae_rain_baseline=2))
+        db.add(ModelRun(district_id="PUNE",trained_at="2026-10-03T00:00:00+00:00",payload=runner._dump_models({}),mae_tavg=1,mae_tavg_baseline=2,mae_rain=3,mae_rain_baseline=2))
         db.commit()
     monkeypatch.setattr(runner,"load_history",lambda _:pd.DataFrame([{"day":(india_today()-timedelta(days=1)).isoformat()}]))
     monkeypatch.setattr(runner,"climatology_map",lambda _: {})

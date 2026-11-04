@@ -178,7 +178,11 @@ def _handle_subscribe(session_id: str, text: str, lang: str) -> str:
             return ask_which_district(lang)
     subscribe(session_id, district.id, lang)
     name = {"en": district.name_en, "hi": district.name_hi, "mr": district.name_mr, "ta": district.name_ta, "te": district.name_te, "kn": district.name_kn, "bn": district.name_bn}.get(lang) or district.name_en
-    return subscribed_text(name, lang)
+    text = subscribed_text(name, lang)
+    from suraksha.delivery.whatsapp import is_whatsapp_id
+    if not is_whatsapp_id(session_id):
+        text += "\n\nNote: alerts are delivered on WhatsApp only. Send SUBSCRIBE from WhatsApp to receive them."
+    return text
 
 
 def _subscription_command(text: str) -> str | None:

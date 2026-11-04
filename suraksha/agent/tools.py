@@ -20,10 +20,6 @@ def find_district(query: str, db: Session) -> District | None:
     q = (query or "").strip().lower()
     if not q:
         return None
-    for aliases in DISTRICT_ALIASES.values():
-        for alias, district_id in aliases.items():
-            if alias in q:
-                return db.get(District, district_id)
     districts = db.query(District).all()
     for d in districts:  # exact id
         if d.id.lower() == q:
@@ -32,20 +28,31 @@ def find_district(query: str, db: Session) -> District | None:
         for nm in (d.name_en, d.name_hi, d.name_mr, d.name_ta, d.name_te, d.name_kn, d.name_bn):
             if nm and nm.lower() == q:
                 return d
+    for aliases in DISTRICT_ALIASES.values():
+        for alias, district_id in aliases.items():
+            if alias in q:
+                return db.get(District, district_id)
     if len(q) < 3:
         return None
-    for d in districts:  # substring / alias / light inflection match (Indic)
+    contained: dict[str, tuple[int, District]] = {}  # district name appears in the message
+    partial: dict[str, District] = {}  # message is a fragment of a district name
+    for d in districts:
         for nm in (d.name_en, d.name_hi, d.name_mr, d.name_ta, d.name_te, d.name_kn, d.name_bn):
             if not nm:
                 continue
             low = nm.lower()
-            if q in low or (low in q and (not low.isascii() or
-                    re.search(r"(?<!\w)" + re.escape(low) + r"(?!\w)", q))):
-                return d
             stem = nm[:-1]  # 'पुण्यात' should still find 'पुणे'
-            if not nm.isascii() and len(stem) >= 3 and stem in (query or ""):
-                return d
-    return None
+            if low in q and (not low.isascii() or re.search(r"(?<!\w)" + re.escape(low) + r"(?!\w)", q)):
+                contained[d.id] = (max(len(low), contained.get(d.id, (0, d))[0]), d)
+            elif not nm.isascii() and len(stem) >= 3 and stem in (query or ""):
+                contained[d.id] = (max(len(stem), contained.get(d.id, (0, d))[0]), d)
+            elif q in low:
+                partial[d.id] = d
+    if contained:  # the longest name wins ("New Delhi" over "Delhi")
+        return max(contained.values(), key=lambda item: item[0])[1]
+    if len(partial) == 1:
+        return next(iter(partial.values()))
+    return None  # unknown or ambiguous: the caller asks the user to be specific
 
 
 def district_context(district_id: str) -> dict:

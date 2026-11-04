@@ -102,3 +102,13 @@ setup are still required for robust real proactive delivery.
   storage. These are not cloud-synced; clear site data to remove them.
 - Browser location is requested on explicit click and sent to the nearest-HQ API.
 - API availability coverage is not an accuracy/confidence estimate.
+
+## Additions (hardening pass)
+
+- `GET /api/states?day=` — state-level rollup (high/moderate/low/unknown districts, exposed population, worst district).
+- `POST /api/alerts/sweep?dry_run=true` — admin preview of recipients/reasons; nothing is sent or logged.
+- `GET /api/subscribers`, `GET /api/alerts/log` — admin listings; phone numbers are masked.
+- Web chat sessions are stored as `web:<id>`; only bare phone numbers receive WhatsApp messages.
+- `/api/chat`, `/voice`, `/brief.pdf` are rate limited per IP (`RATE_LIMIT_PER_MINUTE`, HTTP 429).
+- Proactive alerts use the approved template in `WHATSAPP_ALERT_TEMPLATE` when set.
+- Webhook acknowledges immediately (`accepted`), dedupes by message id, handles batched messages.

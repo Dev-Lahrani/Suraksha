@@ -108,7 +108,7 @@ async def test_normal_advisory_question_is_not_treated_as_command(fresh_nagpur):
 # --------------------------- sweep / dedupe ---------------------------
 
 def test_sweep_without_whatsapp_is_a_noop(fresh_nagpur):
-    subscribe("sw1", "NAGPUR", "en")
+    subscribe("919000000001", "NAGPUR", "en")
     _seed_high_flood_risk()
     summary = run(sweep_subscribers())
     assert summary["subscribers"] == 1
@@ -119,14 +119,14 @@ def test_sweep_without_whatsapp_is_a_noop(fresh_nagpur):
 
 
 def test_alert_one_dedupes_exact_day_and_reason(fresh_nagpur):
-    subscribe("sw2", "NAGPUR", "en")
+    subscribe("919000000002", "NAGPUR", "en")
     day = _seed_high_flood_risk()
 
     # Simulate a successful prior send for this exact (day, reason).
     with SessionLocal() as db:
         db.add(
             AlertLog(
-                subscriber_id="sw2",
+                subscriber_id="919000000002",
                 district_id="NAGPUR",
                 day=day,
                 reason="high_risk:flood",
@@ -136,17 +136,17 @@ def test_alert_one_dedupes_exact_day_and_reason(fresh_nagpur):
         )
         db.commit()
 
-    assert run(_alert_one("sw2")) == []  # deduped, nothing new
+    assert run(_alert_one("919000000002")) == []  # deduped, nothing new
 
 
 def test_alert_one_suppresses_recent_same_reason(fresh_nagpur):
     """A hazard that stays high for days must not re-alert within DEDUPE_DAYS."""
-    subscribe("sw3", "NAGPUR", "en")
+    subscribe("919000000003", "NAGPUR", "en")
     yesterday = india_today() - timedelta(days=1)
     with SessionLocal() as db:
         db.add(
             AlertLog(
-                subscriber_id="sw3",
+                subscriber_id="919000000003",
                 district_id="NAGPUR",
                 day=yesterday,
                 reason="high_risk:flood",
@@ -157,7 +157,7 @@ def test_alert_one_suppresses_recent_same_reason(fresh_nagpur):
         db.commit()
 
     _seed_high_flood_risk()  # flood high again today/tomorrow
-    assert run(_alert_one("sw3")) == []  # suppressed by the recent-same-reason rule
+    assert run(_alert_one("919000000003")) == []  # suppressed by the recent-same-reason rule
 
 
 def test_format_alert_is_grounded_and_compact(fresh_nagpur):
@@ -236,7 +236,7 @@ def test_subscriber_api_rejects_missing_fields(fresh_nagpur):
 
 
 def test_sweep_endpoint_runs(fresh_nagpur):
-    subscribe("api4", "NAGPUR", "en")
+    subscribe("919000000004", "NAGPUR", "en")
     with TestClient(app) as client:
         r = client.post("/api/alerts/sweep")
         assert r.status_code == 200

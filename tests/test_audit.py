@@ -64,7 +64,8 @@ def test_chat_validation(client):
     assert client.post("/api/chat", json={"message": " "}).status_code == 400
 
 
-def test_real_meta_verification(client):
+def test_real_meta_verification(client, monkeypatch):
+    monkeypatch.setattr(get_settings(), "whatsapp_verify_token", "suraksha-verify")
     response = client.get("/webhook/whatsapp", params={"hub.mode": "subscribe", "hub.verify_token": "suraksha-verify", "hub.challenge": "123"})
     assert response.status_code == 200 and response.text == "123"
 

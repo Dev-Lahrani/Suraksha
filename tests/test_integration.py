@@ -221,7 +221,8 @@ def test_pickle_roundtrip_of_models(pune_history):
         pytest.skip("model withheld on degenerate data")
     with SessionLocal() as db:
         run = db.get(ModelRun, "PUNE")
-    models = pickle.loads(base64.b64decode(run.payload))
+    from suraksha.ml.runner import _load_models
+    models = _load_models(run.payload)
     assert "t_anom" in models and "precip" in models and "mae" in models
 
 

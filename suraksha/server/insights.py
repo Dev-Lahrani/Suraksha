@@ -124,3 +124,36 @@ def preparedness(hazard: str = Query("heat", pattern="^(heat|flood|air)$"),
             "actions": [{"id": f"{hazard}-{band}-{index}", "text": action}
                         for index, action in enumerate(playbook_actions(hazard, band, lang))],
             "note": "Preparedness guidance, not official evacuation orders. Follow local authorities."}
+
+
+@router.get("/states")
+def states(day: date | None = None, db: Session = Depends(get_db)) -> dict:
+    """State-level rollup: where do officials need to look first?
+
+    Districts with no scored hazard are counted as unknown, never as safe.
+    """
+    selected = day or india_today()
+    districts = db.query(District).all()
+    peak: dict[str, tuple[float, str]] = {}
+    for risk in db.query(RiskScore).filter(RiskScore.day == selected, RiskScore.score.isnot(None)):
+        if risk.district_id not in peak or risk.score > peak[risk.district_id][0]:
+            peak[risk.district_id] = (risk.score, risk.hazard)
+    by_state: dict[str, dict] = {}
+    for d in districts:
+        row = by_state.setdefault(d.state, {"state": d.state, "districts": 0, "high": 0, "moderate": 0,
+                                            "low": 0, "unknown": 0, "population_in_high_risk_districts": 0,
+                                            "worst": None})
+        row["districts"] += 1
+        if d.id not in peak:
+            row["unknown"] += 1
+            continue
+        score, hazard = peak[d.id]
+        band = "high" if score >= 60 else "moderate" if score >= 25 else "low"
+        row[band] += 1
+        if band == "high":
+            row["population_in_high_risk_districts"] += d.population or 0
+        if row["worst"] is None or score > row["worst"]["score"]:
+            row["worst"] = {"district_id": d.id, "name_en": d.name_en, "hazard": hazard, "score": round(score, 1)}
+    ranked = sorted(by_state.values(), key=lambda r: (-(r["worst"]["score"] if r["worst"] else -1), r["state"]))
+    return {"day": selected.isoformat(), "demo": get_settings().demo_mode, "states": ranked,
+            "note": "Peak scored hazard per district. Unknown means no data, not safe."}

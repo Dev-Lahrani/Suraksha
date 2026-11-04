@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import httpx
 
@@ -11,6 +12,18 @@ from suraksha.config import get_settings
 logger = logging.getLogger(__name__)
 
 GRAPH_VERSION = "v21.0"
+
+
+_PHONE_RE = re.compile(r"^\d{8,15}$")
+
+
+def is_whatsapp_id(session_id: str) -> bool:
+    """Only bare international phone numbers (as sent by Meta) are deliverable.
+
+    Web chat IDs are prefixed ("web:") so a browser client can never target a
+    phone number.
+    """
+    return bool(_PHONE_RE.fullmatch(session_id or ""))
 
 
 def configured() -> bool:
@@ -26,10 +39,29 @@ async def send_text(to: str, body: str) -> bool:
     )
 
 
+async def send_template(to: str, name: str, language: str, params: list[str]) -> bool:
+    """Send an approved template (needed outside the 24h customer-service window)."""
+    # Template variables may not contain newlines/tabs or 4+ consecutive spaces.
+    clean = [re.sub(r"\s+", " ", p).strip()[:1024] for p in params]
+    return await _send_payload(
+        to,
+        {
+            "type": "template",
+            "template": {
+                "name": name,
+                "language": {"code": language},
+                "components": [
+                    {"type": "body", "parameters": [{"type": "text", "text": p} for p in clean]}
+                ],
+            },
+        },
+    )
+
+
 async def send_voice_note(to: str, ogg_data: bytes) -> bool:
     """Upload edge-tts MP3 as a WhatsApp audio message (not OGG/Opus)."""
-    if not configured():
-        logger.info("WhatsApp not configured; skipping voice note (%d bytes)", len(ogg_data))
+    if not configured() or not is_whatsapp_id(to):
+        logger.info("WhatsApp not configured or non-phone recipient; skipping voice note (%d bytes)", len(ogg_data))
         return False
     s = get_settings()
     base = f"https://graph.facebook.com/{GRAPH_VERSION}/{s.whatsapp_phone_number_id}"
@@ -55,8 +87,8 @@ async def send_voice_note(to: str, ogg_data: bytes) -> bool:
 
 
 async def _send_payload(to: str, payload: dict) -> bool:
-    if not configured():
-        logger.info("WhatsApp not configured; would send to %s: %s", to, payload.get("type"))
+    if not configured() or not is_whatsapp_id(to):
+        logger.info("WhatsApp not configured or non-phone recipient; not sending %s", payload.get("type"))
         return False
     s = get_settings()
     url = f"https://graph.facebook.com/{GRAPH_VERSION}/{s.whatsapp_phone_number_id}/messages"
@@ -80,36 +112,28 @@ async def _send_payload(to: str, payload: dict) -> bool:
         return False
 
 
-def extract_webhook_event(payload: dict) -> dict | None:
-    """Parse a Cloud API webhook payload.
-
-    Returns {from, text, timestamp} for text messages, {from, type: 'audio',
-    timestamp} for voice notes, or None for anything else (status updates,
-    media we can't interpret, etc.).
-    """
+def extract_webhook_events(payload: dict) -> list[dict]:
+    """Every text/audio message in a Cloud API payload (Meta batches them)."""
+    events: list[dict] = []
     try:
-        entries = payload.get("entry", [])
-        for entry in entries:
+        for entry in payload.get("entry", []):
             for change in entry.get("changes", []):
-                value = change.get("value", {})
-                messages = value.get("messages")
-                if not messages:
-                    continue
-                msg = messages[0]
-                if msg.get("type") == "text":
-                    return {
-                        "from": msg.get("from", ""),
-                        "text": msg.get("text", {}).get("body", ""),
-                        "timestamp": msg.get("timestamp", ""),
-                    }
-                if msg.get("type") == "audio":
-                    # Indic ASR input is a stretch goal (decision.md D18); for
-                    # now a voice note triggers the voice-advisory flow.
-                    return {
-                        "from": msg.get("from", ""),
-                        "type": "audio",
-                        "timestamp": msg.get("timestamp", ""),
-                    }
-    except (AttributeError, IndexError, KeyError, TypeError):
-        return None
-    return None
+                for msg in change.get("value", {}).get("messages") or []:
+                    base = {"from": msg.get("from", ""), "timestamp": msg.get("timestamp", "")}
+                    if msg.get("id"):
+                        base["id"] = msg["id"]
+                    if msg.get("type") == "text":
+                        events.append({**base, "text": msg.get("text", {}).get("body", "")})
+                    elif msg.get("type") == "audio":
+                        # Indic ASR input is a stretch goal (decision.md D18); for
+                        # now a voice note triggers the voice-advisory flow.
+                        events.append({**base, "type": "audio"})
+    except (AttributeError, KeyError, TypeError):
+        return events
+    return events
+
+
+def extract_webhook_event(payload: dict) -> dict | None:
+    """First message of a payload (kept for callers that handle one event)."""
+    events = extract_webhook_events(payload)
+    return events[0] if events else None

@@ -2,18 +2,30 @@ services:
   - type: web
     name: suraksha
     env: docker
-    plan: free
+    # A persistent disk requires a paid plan. On the free plan SQLite data
+    # (subscribers, alert log, models) is lost on every deploy/restart; use a
+    # managed Postgres DATABASE_URL instead if you stay on free.
+    plan: starter
     healthCheckPath: /api/health
+    disk:
+      name: suraksha-data
+      mountPath: /app/data
+      sizeGB: 1
     envVars:
       - key: PORT
         value: 8000
-      # Optional — add these in the Render dashboard if you have them.
-      # Without them the app still works (deterministic fallback templates).
+      - key: WEB_CONCURRENCY
+        value: 1
+      - key: DATABASE_URL
+        value: sqlite:////app/data/suraksha.db
+      - key: ADMIN_API_KEY
+        generateValue: true
+      - key: MODEL_SIGNING_KEY
+        generateValue: true
+      # Optional — set in the Render dashboard (sync: false keeps them private).
       # - key: NUGEN_API_KEY
-      #   sync: false
-      # - key: OPENAI_API_KEY
-      #   sync: false
       # - key: WHATSAPP_TOKEN
-      #   sync: false
       # - key: WHATSAPP_PHONE_NUMBER_ID
-      #   sync: false
+      # - key: WHATSAPP_APP_SECRET   (required once WhatsApp is configured)
+      # - key: WHATSAPP_VERIFY_TOKEN
+      # - key: WHATSAPP_ALERT_TEMPLATE  (approved template with one body variable)

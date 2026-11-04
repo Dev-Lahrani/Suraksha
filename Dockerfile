@@ -2,20 +2,16 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# System deps for edge-tts / reportlab etc.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
-RUN mkdir -p data
+RUN useradd --create-home --uid 10001 suraksha && mkdir -p data && chown -R suraksha:suraksha /app
+USER suraksha
 
 ENV PORT=8000
 EXPOSE 8000
 
-# Lifespan initializes storage and ingests in the background so health checks
-# are available immediately, even during slow first-time archive requests.
+# Single worker only: scheduler, pipeline lock and caches are in-process.
+# Lifespan ingests in the background so health checks answer immediately.
 CMD python -m suraksha run --host 0.0.0.0 --port ${PORT}
