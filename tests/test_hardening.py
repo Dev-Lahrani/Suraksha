@@ -199,3 +199,52 @@ def test_push_sweep_delivers_logs_and_prunes_expired(client, monkeypatch):
     asyncio.run(alerts.sweep_push())
     with SessionLocal() as db:
         assert db.query(PushSubscription).count() == 0
+
+
+# ---------------------------- Alert preferences ----------------------------
+
+def _score(district, hazard, score, band):
+    from suraksha.db import RiskScore
+    with SessionLocal() as db:
+        day = alerts.india_today()
+        row = db.query(RiskScore).filter_by(district_id=district, day=day, hazard=hazard).first() \
+            or RiskScore(district_id=district, day=day, hazard=hazard)
+        row.score, row.band, row.detail = score, band, "{}"
+        db.add(row)
+        db.commit()
+
+
+def test_preferences_filter_hazards_and_threshold():
+    _score("NAGPUR", "heat", 70, "high")
+    _score("NAGPUR", "flood", 40, "moderate")
+    with SessionLocal() as db:
+        default = {h["hazard"] for h in alerts._high_risk_hazards(db, "NAGPUR")}
+        moderate = {h["hazard"] for h in alerts._high_risk_hazards(db, "NAGPUR", "en", {"heat", "flood"}, 25)}
+        only_flood = {h["hazard"] for h in alerts._high_risk_hazards(db, "NAGPUR", "en", {"flood"}, 25)}
+    assert "heat" in default and "flood" not in default
+    assert {"heat", "flood"} <= moderate
+    assert only_flood == {"flood"}
+
+
+def test_preferences_validation_and_persistence(client):
+    assert alerts.normalize_prefs(["Heat", "air"], 25) == ("heat,air", 25.0)
+    for bad in ([], ["fire"]):
+        with pytest.raises(ValueError):
+            alerts.normalize_prefs(bad, None)
+    with pytest.raises(ValueError):
+        alerts.normalize_prefs(None, 5)
+    r = client.post("/api/subscribers", json={"id": "919000000090", "district_id": "NAGPUR",
+                                              "hazards": ["flood"], "min_score": 25})
+    assert r.status_code == 200
+    assert client.post("/api/subscribers", json={"id": "x", "district_id": "NAGPUR", "hazards": ["fire"]}).status_code == 422
+    got = client.get("/api/subscribers/919000000090").json()
+    assert got["hazards"] == ["flood"] and got["min_score"] == 25.0
+    alerts.subscribe("919000000090", "NAGPUR", "hi")  # re-subscribe keeps preferences
+    assert client.get("/api/subscribers/919000000090").json()["hazards"] == ["flood"]
+
+
+def test_push_preferences(client, monkeypatch):
+    _enable_push(monkeypatch)
+    out = client.post("/api/push/subscribe", json={**SUB, "hazards": ["air"], "min_score": 25}).json()
+    assert out["hazards"] == "air" and out["min_score"] == 25.0
+    assert client.post("/api/push/subscribe", json={**SUB, "min_score": 5}).status_code == 422

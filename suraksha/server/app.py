@@ -364,7 +364,10 @@ async def create_subscriber(request: Request) -> dict:
     with SessionLocal() as db:
         if not db.get(District, district_id):
             raise HTTPException(400, f"Unknown district {district_id}")
-    subscribe(sid, district_id, language)
+    try:
+        subscribe(sid, district_id, language, body.get("hazards"), body.get("min_score"))
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
     return {"status": "subscribed", "id": sid, "district_id": district_id}
 
 
@@ -383,6 +386,8 @@ def get_subscriber(subscriber_id: str, response: Response) -> dict:
             "language": s.language,
             "active": s.active,
             "last_alerted_day": s.last_alerted_day,
+            "hazards": (s.hazards or "heat,flood,air").split(","),
+            "min_score": s.min_score or 60.0,
         }
 
 

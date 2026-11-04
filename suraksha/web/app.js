@@ -293,7 +293,7 @@ const b64ToBytes = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, 
 async function setupAlerts() {
   // Only offer alerts when the browser and server both support Web Push.
   if (!("serviceWorker" in navigator && "PushManager" in window && "Notification" in window)) return;
-  try { const key = await api("/api/push/key"); if (!key.enabled) return; state.vapid = key.public_key; $("alert-district").hidden = false; } catch { /* push not configured */ }
+  try { const key = await api("/api/push/key"); if (!key.enabled) return; state.vapid = key.public_key; $("alert-district").hidden = false; $("alert-prefs").hidden = false; } catch { /* push not configured */ }
 }
 async function toggleAlerts() {
   if (!state.selected || !state.vapid) return;
@@ -306,10 +306,11 @@ async function toggleAlerts() {
     if (await Notification.requestPermission() !== "granted") { notify("Notifications are blocked in this browser."); return; }
     const sub = existing || await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64ToBytes(state.vapid)});
     const json = sub.toJSON();
-    await api("/api/push/subscribe", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys,district_id:state.selected,language:language()})});
+    await api("/api/push/subscribe", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys,district_id:state.selected,language:language(),hazards:alertHazards(),min_score:Number($("alert-level").value)})});
     state.alerted = state.selected; store.write("alerted", state.selected); notify("You’ll get alerts for this district. Alerts supplement, not replace, official warnings."); updateAlertButton();
   } catch { notify("Alerts could not be enabled. Please try again."); }
 }
+const alertHazards = () => { const on = [...$("alert-prefs").querySelectorAll("input:checked")].map(i => i.value); return on.length ? on : ["heat","flood","air"]; };
 function updateAlertButton() { $("alert-district").textContent = state.alerted === state.selected ? "🔕 Alerts on" : "🔔 Alert me"; }
 async function loadMl(id, generation) {
   try { const ml = await api(`/api/district/${id}/ml-outlook`); if (generation !== state.generation || !ml.available) return; $("ml-note").hidden = false; $("ml-note").textContent = "Experimental ML outlook available. Validation: temperature MAE " + decimal(ml.validation?.mae_tavg) + " vs baseline " + decimal(ml.validation?.mae_tavg_baseline) + "; rain MAE " + decimal(ml.validation?.mae_rain) + " vs baseline " + decimal(ml.validation?.mae_rain_baseline) + "."; } catch { /* optional model */ }

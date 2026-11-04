@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from suraksha.agent.i18n import LANGUAGES
 from suraksha.core.clock import india_today
+from suraksha.delivery.alerts import normalize_prefs
 from suraksha.db import District, PushSubscription, get_db
 from suraksha.delivery import webpush
 from suraksha.config import get_settings
@@ -28,6 +29,8 @@ class PushIn(BaseModel):
     keys: Keys
     district_id: str = Field(min_length=1, max_length=64)
     language: str = "en"
+    hazards: list[str] | None = Field(default=None, max_length=3)
+    min_score: float | None = None
 
 
 class PushOut(BaseModel):
@@ -64,13 +67,22 @@ def subscribe(body: PushIn, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(422, "Unsupported language")
     if db.get(District, body.district_id) is None:
         raise HTTPException(404, f"Unknown district {body.district_id}")
+    try:
+        csv, min_score = normalize_prefs(body.hazards, body.min_score)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
     sid = _sub_id(body.endpoint)
     sub = db.get(PushSubscription, sid) or PushSubscription(id=sid, created_at=india_today().isoformat())
     sub.endpoint, sub.p256dh, sub.auth = body.endpoint, body.keys.p256dh, body.keys.auth
     sub.district_id, sub.language = body.district_id, body.language
+    if csv is not None:
+        sub.hazards = csv
+    if min_score is not None:
+        sub.min_score = min_score
     db.add(sub)
     db.commit()
-    return {"status": "subscribed", "district_id": body.district_id}
+    return {"status": "subscribed", "district_id": body.district_id,
+            "hazards": sub.hazards or "heat,flood,air", "min_score": sub.min_score or 60.0}
 
 
 @router.post("/unsubscribe", dependencies=[Depends(rate_limited("push"))])

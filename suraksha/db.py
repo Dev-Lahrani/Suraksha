@@ -113,6 +113,8 @@ class Subscriber(Base):
     active = Column(Boolean, default=True)
     created_at = Column(String, nullable=True)
     last_alerted_day = Column(String, nullable=True)  # ISO date of last alert push (dedupe)
+    hazards = Column(String, nullable=True)  # csv of heat,flood,air; empty = all
+    min_score = Column(Float, nullable=True)  # alert threshold; empty = 60 (high band)
 
 
 class PushSubscription(Base):
@@ -126,6 +128,8 @@ class PushSubscription(Base):
     district_id = Column(String, ForeignKey("districts.id"), nullable=False)
     language = Column(String, default="en")
     created_at = Column(String, nullable=True)
+    hazards = Column(String, nullable=True)
+    min_score = Column(Float, nullable=True)
 
 
 class AlertLog(Base):
@@ -195,6 +199,12 @@ def init_db() -> None:
             column = f"name_{language}"
             if column not in columns:
                 conn.execute(text(f"ALTER TABLE districts ADD COLUMN {column} VARCHAR DEFAULT ''"))
+        for table in ("subscribers", "push_subscriptions"):
+            existing = {c["name"] for c in inspect(engine).get_columns(table)}
+            if "hazards" not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN hazards VARCHAR"))
+            if "min_score" not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN min_score FLOAT"))
     districts_file = Path(__file__).resolve().parents[1] / "resources" / "districts.json"
     data = json.loads(districts_file.read_text(encoding="utf-8"))
     with SessionLocal() as db:  # type: Session

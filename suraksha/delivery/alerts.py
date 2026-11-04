@@ -31,8 +31,36 @@ RISK_LOOKAHEAD_DAYS = 2
 DEDUPE_DAYS = 3
 
 
-def subscribe(session_id: str, district_id: str, language: str = "en") -> None:
-    """Activate (or create) a subscriber for one district."""
+HAZARD_IDS = ("heat", "flood", "air")
+DEFAULT_MIN_SCORE = 60.0  # the "high" band
+
+
+def normalize_prefs(hazards, min_score) -> tuple[str | None, float | None]:
+    """Validate alert preferences; ValueError on bad input. None means 'unchanged'."""
+    csv = None
+    if hazards is not None:
+        chosen = [str(h).strip().lower() for h in hazards]
+        if not chosen or any(h not in HAZARD_IDS for h in chosen):
+            raise ValueError("hazards must be a non-empty subset of heat, flood, air")
+        csv = ",".join(h for h in HAZARD_IDS if h in chosen)
+    if min_score is not None:
+        min_score = float(min_score)
+        if not 25 <= min_score <= 100:
+            raise ValueError("min_score must be between 25 (moderate) and 100")
+    return csv, min_score
+
+
+def _pref_hazards(csv: str | None) -> set[str]:
+    return {h for h in (csv or "").split(",") if h in HAZARD_IDS} or set(HAZARD_IDS)
+
+
+def subscribe(session_id: str, district_id: str, language: str = "en",
+              hazards=None, min_score=None) -> None:
+    """Activate (or create) a subscriber for one district.
+
+    Alert preferences are only changed when given, so re-subscribing keeps them.
+    """
+    csv, min_score = normalize_prefs(hazards, min_score)
     with SessionLocal() as db:  # type: Session
         s = db.get(Subscriber, session_id)
         if s is None:
@@ -48,6 +76,10 @@ def subscribe(session_id: str, district_id: str, language: str = "en") -> None:
             s.district_id = district_id
             s.language = language
             s.active = True
+        if csv is not None:
+            s.hazards = csv
+        if min_score is not None:
+            s.min_score = min_score
         db.commit()
 
 
@@ -120,7 +152,8 @@ async def sweep_subscribers(dry_run: bool = False) -> dict:
     }
 
 
-def _prepare(db: Session, key: str, district_id: str, lang: str):
+def _prepare(db: Session, key: str, district_id: str, lang: str,
+             hazard_csv: str | None = None, min_score: float | None = None):
     """Hazards/anomalies for one recipient, minus what was already sent (dedupe).
 
     Returns (district dict, hazards, anomalies, fresh [(day, reason)], text) or None.
@@ -130,7 +163,8 @@ def _prepare(db: Session, key: str, district_id: str, lang: str):
         return None
     district = {"id": d.id, "state": d.state,
                 **{f"name_{c}": getattr(d, f"name_{c}") for c in ("en", "hi", "mr", "ta", "te", "kn", "bn")}}
-    hazards = _high_risk_hazards(db, district_id, lang)
+    hazards = _high_risk_hazards(db, district_id, lang, _pref_hazards(hazard_csv),
+                                 min_score if min_score is not None else DEFAULT_MIN_SCORE)
     anomalies = detect_anomalies(district_id, lookback_days=2)
 
     # Dedupe: exact (day, reason) rows already sent, plus any same-reason
@@ -180,7 +214,7 @@ async def _alert_one(subscriber_id: str, dry_run: bool = False) -> list[str]:
         s = db.get(Subscriber, subscriber_id)
         if s is None or not s.active:
             return []
-        prepared = _prepare(db, subscriber_id, s.district_id, s.language or "en")
+        prepared = _prepare(db, subscriber_id, s.district_id, s.language or "en", s.hazards, s.min_score)
         if prepared is None:
             return []
         _, _, _, fresh, text = prepared
@@ -214,7 +248,7 @@ async def sweep_push(dry_run: bool = False) -> dict:
                 sub = db.get(PushSubscription, pid)
                 if sub is None:
                     continue
-                prepared = _prepare(db, "push:" + pid, sub.district_id, sub.language or "en")
+                prepared = _prepare(db, "push:" + pid, sub.district_id, sub.language or "en", sub.hazards, sub.min_score)
                 if prepared is None:
                     continue
                 district, hazards, _, fresh, text = prepared
@@ -238,8 +272,9 @@ async def sweep_push(dry_run: bool = False) -> dict:
     return {"push_subscribers": len(ids), "push_alerted": alerted}
 
 
-def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> list[dict]:
-    """High-band risk rows in the lookahead window, formatted like advisory hazards."""
+def _high_risk_hazards(db: Session, district_id: str, language: str = "en",
+                       hazards: set[str] | None = None, min_score: float = DEFAULT_MIN_SCORE) -> list[dict]:
+    """Rows at/above the subscriber threshold in the lookahead window, formatted like advisory hazards."""
     from suraksha.agent.i18n import playbook_actions
 
     today = india_today()
@@ -247,7 +282,8 @@ def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> l
         db.query(RiskScore)
         .filter(
             RiskScore.district_id == district_id,
-            RiskScore.band == "high",
+            RiskScore.score >= min_score,
+            RiskScore.hazard.in_(sorted(hazards or HAZARD_IDS)),
             RiskScore.day >= today,
             RiskScore.day <= today + timedelta(days=RISK_LOOKAHEAD_DAYS),
         )
@@ -270,7 +306,7 @@ def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> l
                 "score": r.score or 0.0,
                 "band": r.band or "high",
                 "detail": detail,
-                "actions": playbook_actions(r.hazard, "high", language),
+                "actions": playbook_actions(r.hazard, r.band or "high", language),
                 "_day": r.day,
             }
         )
