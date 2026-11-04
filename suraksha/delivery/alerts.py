@@ -17,7 +17,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from suraksha.core.anomaly import detect_anomalies
-from suraksha.db import AlertLog, District, RiskScore, SessionLocal, Subscriber
+from suraksha.db import AlertLog, District, PushSubscription, RiskScore, SessionLocal, Subscriber
 from suraksha.delivery import whatsapp
 
 logger = logging.getLogger(__name__)
@@ -84,12 +84,13 @@ async def sweep_subscribers(dry_run: bool = False) -> dict:
         sub_ids = [i for i in all_ids if whatsapp.is_whatsapp_id(i)]
         undeliverable = len(all_ids) - len(sub_ids)
 
+    push = await sweep_push(dry_run)
     if not sub_ids:
-        return {"subscribers": 0, "alerted": 0, "reasons": [], "skipped": 0, "undeliverable": undeliverable}
+        return {**push, "subscribers": 0, "alerted": 0, "reasons": [], "skipped": 0, "undeliverable": undeliverable}
 
     if not whatsapp.configured() and not dry_run:
         logger.info("alert sweep skipped: WhatsApp not configured (%d subscribers)", len(sub_ids))
-        return {"subscribers": len(sub_ids), "alerted": 0, "reasons": [], "skipped": len(sub_ids), "undeliverable": undeliverable}
+        return {**push, "subscribers": len(sub_ids), "alerted": 0, "reasons": [], "skipped": len(sub_ids), "undeliverable": undeliverable}
 
     alerted = 0
     skipped = 0
@@ -109,6 +110,7 @@ async def sweep_subscribers(dry_run: bool = False) -> dict:
 
     logger.info("alert sweep done: %d alerted, %d skipped", alerted, skipped)
     return {
+        **push,
         "subscribers": len(sub_ids),
         "alerted": alerted,
         "reasons": reasons_sent,
@@ -118,77 +120,122 @@ async def sweep_subscribers(dry_run: bool = False) -> dict:
     }
 
 
+def _prepare(db: Session, key: str, district_id: str, lang: str):
+    """Hazards/anomalies for one recipient, minus what was already sent (dedupe).
+
+    Returns (district dict, hazards, anomalies, fresh [(day, reason)], text) or None.
+    """
+    d = db.get(District, district_id)
+    if d is None:
+        return None
+    district = {"id": d.id, "state": d.state,
+                **{f"name_{c}": getattr(d, f"name_{c}") for c in ("en", "hi", "mr", "ta", "te", "kn", "bn")}}
+    hazards = _high_risk_hazards(db, district_id, lang)
+    anomalies = detect_anomalies(district_id, lookback_days=2)
+
+    # Dedupe: exact (day, reason) rows already sent, plus any same-reason
+    # alert in the last DEDUPE_DAYS so persistent hazards don't spam daily.
+    recent_cutoff = india_today() - timedelta(days=DEDUPE_DAYS)
+    alerts = db.query(AlertLog).filter(AlertLog.subscriber_id == key).all()
+    existing = {(a.day, a.reason) for a in alerts}
+    recent_reasons = {a.reason for a in alerts if a.day and a.day >= recent_cutoff}
+    fresh: list[tuple[date, str]] = []
+    for h in hazards:
+        reason = f"high_risk:{h['hazard']}"
+        k = (h["_day"], reason)
+        if k not in existing and reason not in recent_reasons:
+            fresh.append(k)
+    for e in anomalies:
+        reason = f"anomaly:{e['kind']}"
+        k = (date.fromisoformat(e["day"]), reason)
+        if k not in existing and reason not in recent_reasons:
+            fresh.append(k)
+    fresh = list(dict.fromkeys(fresh))
+    if not fresh:
+        return None
+    from suraksha.agent.i18n import format_alert
+
+    return district, hazards, anomalies, fresh, format_alert(district, hazards, anomalies, lang)
+
+
+async def _send_logged(db: Session, key: str, district_id: str, channel: str, fresh, send) -> bool:
+    """Record first, send second: a crash after a successful send can never
+    re-alert; a failed send removes the rows so the next sweep retries."""
+    now_iso = _utcnow_iso()
+    logs = [AlertLog(subscriber_id=key, district_id=district_id, day=day, reason=reason,
+                     channel=channel, sent_at=now_iso) for day, reason in fresh]
+    db.add_all(logs)
+    db.commit()
+    if await send():
+        return True
+    for log in logs:
+        db.delete(log)
+    db.commit()
+    return False
+
+
 async def _alert_one(subscriber_id: str, dry_run: bool = False) -> list[str]:
     """Build + send one subscriber's alert. Returns the reasons that were pushed."""
     with SessionLocal() as db:  # type: Session
         s = db.get(Subscriber, subscriber_id)
         if s is None or not s.active:
             return []
-        lang = s.language or "en"
-        d = db.get(District, s.district_id)
-        if d is None:
+        prepared = _prepare(db, subscriber_id, s.district_id, s.language or "en")
+        if prepared is None:
             return []
-        district = {
-            "id": d.id,
-            "name_en": d.name_en,
-            "name_hi": d.name_hi,
-            "name_mr": d.name_mr,
-            "name_ta": d.name_ta,
-            "name_te": d.name_te,
-            "name_kn": d.name_kn,
-            "name_bn": d.name_bn,
-            "state": d.state,
-        }
-
-        hazards = _high_risk_hazards(db, s.district_id, lang)
-        anomalies = detect_anomalies(s.district_id, lookback_days=2)
-
-        # Dedupe: exact (day, reason) rows already sent, plus any same-reason
-        # alert in the last DEDUPE_DAYS so persistent hazards don't spam daily.
-        recent_cutoff = india_today() - timedelta(days=DEDUPE_DAYS)
-        alerts = db.query(AlertLog).filter(AlertLog.subscriber_id == subscriber_id).all()
-        existing = {(a.day, a.reason) for a in alerts}
-        recent_reasons = {a.reason for a in alerts if a.day and a.day >= recent_cutoff}
-        fresh: list[tuple[date, str]] = []
-        for h in hazards:
-            reason = f"high_risk:{h['hazard']}"
-            key = (h["_day"], reason)
-            if key not in existing and reason not in recent_reasons:
-                fresh.append(key)
-        for e in anomalies:
-            reason = f"anomaly:{e['kind']}"
-            key = (date.fromisoformat(e["day"]), reason)
-            if key not in existing and reason not in recent_reasons:
-                fresh.append(key)
-        fresh = list(dict.fromkeys(fresh))
-
-        if not fresh:
-            return []
-
-        from suraksha.agent.i18n import format_alert
-
-        text = format_alert(district, hazards, anomalies, lang)
+        _, _, _, fresh, text = prepared
+        reasons = [f"{day.isoformat()}:{reason}" for day, reason in fresh]
         if dry_run:
-            return [f"{day.isoformat()}:{reason}" for day, reason in fresh]
-
-        # Record first, send second: a crash after a successful send can then
-        # never re-alert; a failed send removes the rows so the next sweep retries.
-        now_iso = _utcnow_iso()
-        logs = [AlertLog(subscriber_id=subscriber_id, district_id=s.district_id, day=day,
-                         reason=reason, channel="whatsapp", sent_at=now_iso) for day, reason in fresh]
-        db.add_all(logs)
-        db.commit()
-        ok = await _deliver(subscriber_id, text)
-        if not ok:
+            return reasons
+        if not await _send_logged(db, subscriber_id, s.district_id, "whatsapp", fresh,
+                                  lambda: _deliver(subscriber_id, text)):
             logger.error("alert send FAILED for %s (district %s); will retry next sweep",
                          subscriber_id, s.district_id)
-            for log in logs:
-                db.delete(log)
-            db.commit()
             return []
         s.last_alerted_day = india_today().isoformat()
         db.commit()
-        return [f"{day.isoformat()}:{reason}" for day, reason in fresh]
+        return reasons
+
+
+async def sweep_push(dry_run: bool = False) -> dict:
+    """Web Push counterpart of the WhatsApp sweep (no phone number needed)."""
+    from suraksha.delivery import webpush
+
+    with SessionLocal() as db:
+        ids = [r.id for r in db.query(PushSubscription.id)]
+    if not ids:
+        return {"push_subscribers": 0, "push_alerted": 0}
+    if not webpush.configured() and not dry_run:
+        return {"push_subscribers": len(ids), "push_alerted": 0, "push_skipped": "not configured"}
+    alerted = 0
+    for pid in ids:
+        try:
+            with SessionLocal() as db:
+                sub = db.get(PushSubscription, pid)
+                if sub is None:
+                    continue
+                prepared = _prepare(db, "push:" + pid, sub.district_id, sub.language or "en")
+                if prepared is None:
+                    continue
+                district, hazards, _, fresh, text = prepared
+                if dry_run:
+                    alerted += 1
+                    continue
+                title = f"Suraksha: {district['name_en']}"
+                result: dict = {}
+
+                async def send():
+                    result["r"] = await webpush.send(sub, title, text[:400], district["id"])
+                    return result["r"] == "ok"
+
+                if await _send_logged(db, "push:" + pid, sub.district_id, "push", fresh, send):
+                    alerted += 1
+                elif result.get("r") == "gone":  # browser unsubscribed: stop trying
+                    db.delete(sub)
+                    db.commit()
+        except Exception:  # noqa: BLE001
+            logger.exception("push alert failed for %s", pid)
+    return {"push_subscribers": len(ids), "push_alerted": alerted}
 
 
 def _high_risk_hazards(db: Session, district_id: str, language: str = "en") -> list[dict]:

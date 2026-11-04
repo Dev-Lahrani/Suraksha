@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # only works inside Meta's 24h customer-service window, so sweeps need this.
     whatsapp_alert_template: str = ""
     whatsapp_alert_template_lang: str = "en"
+    # Web Push (VAPID). Generate with `python -m suraksha vapid`.
+    vapid_private_key: str = ""
+    vapid_public_key: str = ""
+    vapid_subject: str = "mailto:admin@example.org"
     # HMAC key protecting pickled ML models stored in the database.
     model_signing_key: str = ""
     # Requests per minute per client IP for expensive public endpoints.

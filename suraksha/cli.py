@@ -30,6 +30,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="suraksha", description="Suraksha early-warning assistant")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    sub.add_parser("vapid", help="generate Web Push (VAPID) keys")
     sub.add_parser("init-db", help="create tables and seed districts")
     sub.add_parser("doctor", help="check local readiness without network calls or secrets")
     p_demo = sub.add_parser("demo", help="start labelled synthetic demo in a separate database")
@@ -82,6 +83,13 @@ def main(argv: list[str] | None = None) -> int:
                   "note": "Local readiness only; no provider/network verification. No secret values printed."}
         print(json.dumps(checks, indent=2))
         return 0 if count and assets else 1
+
+    if args.command == "vapid":
+        from suraksha.delivery.webpush import generate_keys
+
+        private, public = generate_keys()
+        print(f"VAPID_PRIVATE_KEY={private}\nVAPID_PUBLIC_KEY={public}\nVAPID_SUBJECT=mailto:you@example.org")
+        return 0
 
     if args.command == "init-db":
         from suraksha.db import init_db

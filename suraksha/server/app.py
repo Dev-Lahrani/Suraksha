@@ -73,6 +73,8 @@ from suraksha.server.insights import router as insights_router
 app.include_router(insights_router)
 from suraksha.server.missions import router as missions_router
 app.include_router(missions_router)
+from suraksha.server.push import router as push_router
+app.include_router(push_router)
 
 
 @app.middleware("http")

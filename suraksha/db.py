@@ -115,6 +115,19 @@ class Subscriber(Base):
     last_alerted_day = Column(String, nullable=True)  # ISO date of last alert push (dedupe)
 
 
+class PushSubscription(Base):
+    """A browser Web Push endpoint subscribed to alerts for one district."""
+
+    __tablename__ = "push_subscriptions"
+    id = Column(String, primary_key=True)  # sha256(endpoint)[:32]
+    endpoint = Column(String, nullable=False)
+    p256dh = Column(String, nullable=False)
+    auth = Column(String, nullable=False)
+    district_id = Column(String, ForeignKey("districts.id"), nullable=False)
+    language = Column(String, default="en")
+    created_at = Column(String, nullable=True)
+
+
 class AlertLog(Base):
     """One proactive push per (subscriber, district-day, reason) — audit + dedupe."""
 

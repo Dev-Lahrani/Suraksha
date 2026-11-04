@@ -67,6 +67,7 @@ async function refresh() {
   $("watchlist-list").replaceChildren(node("p", "empty", "Loading next-48-hour signals…"));
   const results = await Promise.allSettled([api("/api/health"), api(`/api/overview?day=${state.day}`), api(`/api/risk-map?day=${state.day}`), api(`/api/watchlist?limit=6&hazard=${state.hazard}`)]);
   if (generation !== state.refreshGeneration) return;
+  loadStates();
   const [health, metrics, risks, watchlist] = results;
   if (!state.districts.length) {
     try { state.districts = await api("/api/districts"); populateRegistry(); renderPlot(); renderExplorer(); renderSaved(); }
@@ -162,7 +163,7 @@ function renderExplorer() {
 function toggleSaved(id) {
   state.saved.has(id) ? state.saved.delete(id) : state.saved.add(id); store.write("saved", [...state.saved]); renderSaved(); renderExplorer(); updateSaveButton();
 }
-function updateSaveButton() { $("save-district").textContent = state.saved.has(state.selected) ? "★ Saved" : "☆ Save"; }
+function updateSaveButton() { updateAlertButton(); $("save-district").textContent = state.saved.has(state.selected) ? "★ Saved" : "☆ Save"; }
 function renderSaved() {
   const districts = state.districts.filter(d => state.saved.has(d.id)); $("saved-count").textContent = districts.length;
   $("saved-preview").replaceChildren(); $("saved-grid").replaceChildren();
@@ -277,6 +278,39 @@ function drawChart(id, rows, fields) {
   });
   const legend = node("div", "chart-legend", "Mint: temperature °C · Blue: rain mm · independently scaled; see table for values"); $(id).replaceChildren(svg,legend);
 }
+async function loadStates() {
+  const body = $("state-rows");
+  try {
+    const data = await api(`/api/states?day=${state.day}`);
+    body.replaceChildren(...data.states.map(s => { const tr = node("tr");
+      [s.state, s.high, s.moderate, s.low, s.unknown].forEach((v, i) => { const td = node("td", "", String(v)); if (i === 1 && s.high) td.className = "score-chip high"; tr.append(td); });
+      const worst = node("td", "", s.worst ? `${s.worst.name_en} · ${HAZARDS[s.worst.hazard] || s.worst.hazard} ${number(s.worst.score)}` : "No data");
+      if (s.worst) { worst.style.cursor = "pointer"; worst.tabIndex = 0; worst.onclick = () => openDistrict(s.worst.district_id); worst.onkeydown = e => e.key === "Enter" && openDistrict(s.worst.district_id); }
+      tr.append(worst); return tr; }));
+  } catch { body.replaceChildren(node("tr")); body.firstChild.append(Object.assign(node("td", "", "State rollup unavailable. Missing data is not safe."), {colSpan: 6})); }
+}
+const b64ToBytes = s => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=")), c => c.charCodeAt(0));
+async function setupAlerts() {
+  // Only offer alerts when the browser and server both support Web Push.
+  if (!("serviceWorker" in navigator && "PushManager" in window && "Notification" in window)) return;
+  try { const key = await api("/api/push/key"); if (!key.enabled) return; state.vapid = key.public_key; $("alert-district").hidden = false; } catch { /* push not configured */ }
+}
+async function toggleAlerts() {
+  if (!state.selected || !state.vapid) return;
+  try {
+    const reg = await navigator.serviceWorker.ready; const existing = await reg.pushManager.getSubscription();
+    if (existing && state.alerted === state.selected) {
+      await api("/api/push/unsubscribe", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:existing.endpoint})}).catch(() => {});
+      await existing.unsubscribe(); state.alerted = null; store.write("alerted", null); notify("District alerts turned off."); return updateAlertButton();
+    }
+    if (await Notification.requestPermission() !== "granted") { notify("Notifications are blocked in this browser."); return; }
+    const sub = existing || await reg.pushManager.subscribe({userVisibleOnly: true, applicationServerKey: b64ToBytes(state.vapid)});
+    const json = sub.toJSON();
+    await api("/api/push/subscribe", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({endpoint:json.endpoint,keys:json.keys,district_id:state.selected,language:language()})});
+    state.alerted = state.selected; store.write("alerted", state.selected); notify("You’ll get alerts for this district. Alerts supplement, not replace, official warnings."); updateAlertButton();
+  } catch { notify("Alerts could not be enabled. Please try again."); }
+}
+function updateAlertButton() { $("alert-district").textContent = state.alerted === state.selected ? "🔕 Alerts on" : "🔔 Alert me"; }
 async function loadMl(id, generation) {
   try { const ml = await api(`/api/district/${id}/ml-outlook`); if (generation !== state.generation || !ml.available) return; $("ml-note").hidden = false; $("ml-note").textContent = "Experimental ML outlook available. Validation: temperature MAE " + decimal(ml.validation?.mae_tavg) + " vs baseline " + decimal(ml.validation?.mae_tavg_baseline) + "; rain MAE " + decimal(ml.validation?.mae_rain) + " vs baseline " + decimal(ml.validation?.mae_rain_baseline) + "."; } catch { /* optional model */ }
 }
@@ -370,7 +404,7 @@ function bind() {
   $("open-chat").onclick = $("hero-chat").onclick = openChat; $("close-chat").onclick = () => $("chat-panel").hidden = true;
   $("chat-form").onsubmit = e => {e.preventDefault();const text=$("chat-input").value;$("chat-input").value="";sendChat(text);};
   document.querySelectorAll("[data-prompt]").forEach(el => el.onclick = () => { const district = state.districts.find(d => d.id === state.selected) || state.districts.find(d => state.saved.has(d.id)); if (!district) {notify("Name a district in chat, or save one first.");return;} sendChat(`${district.name_en} ${el.dataset.prompt}`); });
-  $("locate").onclick = locate;
+  $("locate").onclick = locate; $("alert-district").onclick = toggleAlerts;
   $("print-mission").onclick = printMission;
   $("scenario-form").onsubmit = e => { e.preventDefault(); runScenario(); };
   document.querySelectorAll("[data-preset]").forEach(el => el.onclick = () => {
@@ -403,6 +437,7 @@ async function boot() {
   const [districts,languages] = await Promise.allSettled([api("/api/districts"),api("/api/languages")]);
   if(districts.status === "fulfilled") {state.districts=districts.value;populateRegistry();} else notify("District registry could not load. Reload the page to retry.");
   if(languages.status === "fulfilled") {state.languages=languages.value;$("language").replaceChildren(...state.languages.map(l=>{const option=node("option","",l.name);option.value=l.code;return option;}));const saved=store.read("language","en");if(state.languages.some(l=>l.code===saved))$("language").value=saved;}
+  state.alerted = store.read("alerted", null); setupAlerts();
   await refresh(); const id=new URL(location.href).searchParams.get("district");if(id&&state.districts.some(d=>d.id===id))openDistrict(id);
   setInterval(()=>{if(!document.hidden)refresh();},60000);
 }

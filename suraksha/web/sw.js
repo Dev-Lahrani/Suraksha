@@ -1,5 +1,5 @@
 /* App-shell-only cache: warnings and private/API responses are NEVER cached. */
-const CACHE = "suraksha-shell-v4";
+const CACHE = "suraksha-shell-v5";
 const SHELL = ["/", "/app.js", "/styles.css", "/manifest.webmanifest", "/icon.svg"];
 self.addEventListener("install", event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
@@ -22,4 +22,18 @@ self.addEventListener("fetch", event => {
     const cached = await caches.match(shellPath);
     return cached || new Response("Offline app shell unavailable", { status: 503 });
   }));
+});
+
+// Web Push alerts: the payload is generated server-side from district risk data.
+self.addEventListener("push", event => {
+  let data = {};
+  try { data = event.data ? event.data.json() : {}; } catch { /* malformed payload */ }
+  event.waitUntil(self.registration.showNotification(data.title || "Suraksha alert", {
+    body: data.body || "New risk alert for your district.", icon: "/icon.svg", tag: "suraksha-" + (data.district_id || "alert"),
+    data: { url: "/?district=" + encodeURIComponent(data.district_id || "") }, requireInteraction: true }));
+});
+self.addEventListener("notificationclick", event => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/";
+  event.waitUntil(self.clients.openWindow(url));
 });

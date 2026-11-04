@@ -146,3 +146,56 @@ def test_states_rollup(client):
     data = client.get("/api/states").json()
     assert data["states"] and all(
         s["high"] + s["moderate"] + s["low"] + s["unknown"] == s["districts"] for s in data["states"])
+
+
+# ---------------------------- Web Push ----------------------------
+
+def _enable_push(monkeypatch):
+    from suraksha.delivery.webpush import generate_keys
+    private, public = generate_keys()
+    monkeypatch.setattr(get_settings(), "vapid_private_key", private)
+    monkeypatch.setattr(get_settings(), "vapid_public_key", public)
+    return public
+
+
+SUB = {"endpoint": "https://push.example.com/send/abc123", "district_id": "NAGPUR",
+       "keys": {"p256dh": "B" * 20, "auth": "A" * 16}}
+
+
+def test_push_disabled_without_keys(client):
+    assert client.get("/api/push/key").json()["enabled"] is False
+    assert client.post("/api/push/subscribe", json=SUB).status_code == 503
+
+
+def test_push_subscribe_validates_and_roundtrips(client, monkeypatch):
+    public = _enable_push(monkeypatch)
+    assert client.get("/api/push/key").json()["public_key"] == public
+    assert client.post("/api/push/subscribe", json={**SUB, "endpoint": "http://push.example.com/x"}).status_code == 422
+    assert client.post("/api/push/subscribe", json={**SUB, "endpoint": "https://127.0.0.1/x"}).status_code == 422
+    assert client.post("/api/push/subscribe", json={**SUB, "district_id": "NOPE"}).status_code == 404
+    assert client.post("/api/push/subscribe", json=SUB).json()["status"] == "subscribed"
+    assert client.post("/api/push/subscribe", json=SUB).status_code == 200  # idempotent upsert
+    assert client.post("/api/push/unsubscribe", json={"endpoint": SUB["endpoint"]}).status_code == 200
+    assert client.post("/api/push/unsubscribe", json={"endpoint": SUB["endpoint"]}).status_code == 404
+
+
+def test_push_sweep_delivers_logs_and_prunes_expired(client, monkeypatch):
+    from suraksha.db import PushSubscription
+    _enable_push(monkeypatch)
+    client.post("/api/push/subscribe", json=SUB)
+    monkeypatch.setattr(alerts, "_high_risk_hazards", lambda *a, **k: [
+        {"hazard": "heat", "score": 90.0, "band": "high", "detail": {}, "actions": [], "_day": alerts.india_today()}])
+    monkeypatch.setattr(alerts, "detect_anomalies", lambda *a, **k: [])
+    from suraksha.delivery import webpush
+    send = AsyncMock(return_value="ok")
+    monkeypatch.setattr(webpush, "send", send)
+    assert asyncio.run(alerts.sweep_push())["push_alerted"] == 1
+    assert asyncio.run(alerts.sweep_push())["push_alerted"] == 0  # deduped
+    send.assert_awaited_once()
+    with SessionLocal() as db:
+        db.query(AlertLog).filter(AlertLog.subscriber_id.like("push:%")).delete(synchronize_session=False)
+        db.commit()
+    monkeypatch.setattr(webpush, "send", AsyncMock(return_value="gone"))
+    asyncio.run(alerts.sweep_push())
+    with SessionLocal() as db:
+        assert db.query(PushSubscription).count() == 0
